@@ -1,5 +1,10 @@
-// Atualização da dívida (multa + juros diários simples).
-// Se a escola não informou taxas, NADA é calculado — apenas o aviso de atualização é exibido.
+// Atualização da dívida (multa + juros diários simples), como no boleto da escola:
+//  • multa única, a partir do dia seguinte ao vencimento (ex.: 2% de R$ 590,00 = R$ 11,80)
+//  • juros por dia de atraso, com o valor diário em centavos calculado antes de multiplicar
+//    pelos dias (ex.: 0,033% de R$ 590,00 = R$ 0,19 por dia)
+//  • centavos sempre arredondados para baixo, para nunca cobrar a mais que o boleto
+// Base: o valor em aberto de cada parcela (valor cheio). Sem taxas informadas, NADA é
+// calculado — apenas o aviso de atualização é exibido.
 
 import { daysBetween } from '../format'
 import type { Installment } from './rules'
@@ -19,6 +24,19 @@ export type DebtUpdate = {
   date: string
 }
 
+// pequeno ajuste para erros de ponto flutuante (ex.: 1180,0000000002 → 1180)
+const floorCents = (v: number) => Math.floor(v + 1e-6)
+
+/** Multa em centavos sobre o valor da parcela. */
+export function fineFor(baseCents: number, finePct: number | null): number {
+  return finePct ? floorCents((baseCents * finePct) / 100) : 0
+}
+
+/** Juros de um dia de atraso, em centavos. */
+export function dailyInterestFor(baseCents: number, dailyPct: number | null): number {
+  return dailyPct ? floorCents((baseCents * dailyPct) / 100) : 0
+}
+
 export function isInterestConfigured(s: InterestSettings): boolean {
   return (s.daily_interest_pct !== null && s.daily_interest_pct > 0) || (s.fine_pct !== null && s.fine_pct > 0)
 }
@@ -36,8 +54,8 @@ export function computeDebtUpdate(installments: Installment[], s: InterestSettin
     const from = start && start > i.vencimento ? start : i.vencimento
     const days = Math.max(0, daysBetween(from, today))
     const overdue = daysBetween(i.vencimento, today) > 0 && (!start || today >= start)
-    if (overdue && s.fine_pct) fineCents += Math.round((i.emAbertoCents * s.fine_pct) / 100)
-    if (days > 0 && s.daily_interest_pct) interestCents += Math.round((i.emAbertoCents * s.daily_interest_pct * days) / 100)
+    if (overdue) fineCents += fineFor(i.emAbertoCents, s.fine_pct)
+    if (days > 0) interestCents += dailyInterestFor(i.emAbertoCents, s.daily_interest_pct) * days
   }
   return { configured: true, originalCents, fineCents, interestCents, updatedCents: originalCents + fineCents + interestCents, date: today }
 }

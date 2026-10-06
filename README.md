@@ -43,7 +43,7 @@ Nada é enviado na importação.
 | **Proteções** | Aviso de cobrança recente (“Este responsável recebeu uma cobrança em DD/MM/AAAA. Deseja enviar novamente?”), bloqueio de cobranças com alerta até alguém conferir, trava contra clique duplo e contra dois funcionários enviando ao mesmo tempo, **modo de testes** (envio automático) ligado por padrão. |
 | **Histórico** | Data, horário, responsável, aluno, valor, canal, WhatsApp, e-mail, status (Enviado, Entregue, Erro, Pendente, Cancelado, Teste) e funcionário. Clique para ver o texto exato enviado. Administradores podem **apagar** envios (um ou vários); a cobrança volta a ficar pendente se não restar outro envio. |
 | **Painel** | Total em aberto, responsáveis inadimplentes, alunos, mensalidades vencidas, mensagens enviadas hoje, cobranças por WhatsApp e por e-mail, e gráficos: inadimplência por mês, parcelas vencidas por tempo de atraso e valor em aberto por turma. |
-| **Configurações** | Forma de envio, regra de parcela em aberto, valor cobrado (valor cheio, padrão), exibição do CPF, textos das mensagens com prévia, integrações do envio automático, modo de testes e arquivamento do PDF. |
+| **Configurações** | Forma de envio, juros e multa (com conferência por um boleto), regra de parcela em aberto, valor cobrado (valor cheio, padrão), exibição do CPF, textos das mensagens com prévia, integrações do envio automático, modo de testes e arquivamento do PDF. |
 | **Usuários e logs** | Criar, desativar e redefinir senha; logs de acesso e de todas as ações sensíveis. |
 
 ---
@@ -161,7 +161,7 @@ Preencha também o **e-mail remetente** (precisa estar autorizado no provedor), 
 4. Faça um primeiro envio para você mesmo: use “Corrigir contato” numa cobrança para colocar o seu número/e-mail, abra, envie e veja como a mensagem chega. Depois cancele essa cobrança.
 5. Cadastre os funcionários em **Usuários**.
 6. Se um dia usar o envio automático, o **modo de testes** (ligado por padrão) manda tudo para o seu contato de teste até ser desligado.
-7. O valor cobrado é o **valor cheio** da parcela (sem desconto e sem juros), como a escola definiu. Se isso mudar, ajuste em Configurações → Leitura e cobrança.
+7. O valor cobrado é o **valor cheio** da parcela (sem desconto), como a escola definiu, mais multa e juros conforme Configurações → Juros e multa.
 
 ---
 
@@ -173,7 +173,9 @@ Preencha também o **e-mail remetente** (precisa estar autorizado no provedor), 
 - Cada cobrança recebe **alertas** quando algo merece atenção: CPF inválido, sem celular, telefone fixo, 9º dígito acrescentado, sem e-mail, valores que não fecham (parcela − desconto ≠ líquido), mesmo celular para responsáveis diferentes, responsável que precisou ser “herdado” do aluno anterior. Alertas **críticos** bloqueiam o envio até alguém clicar em “Marcar como conferido”.
 - Se nenhum aluno for identificado, a tela mostra as primeiras linhas lidas — útil para ajustar o leitor a um layout diferente (`src/lib/pdf/parse.ts`).
 
-> O leitor foi testado com relatórios **fictícios** montados a partir dos campos descritos (veja `exemplos/relatorio-exemplo.pdf` e `scripts/gerar-pdf-exemplo.py`). Antes de usar em produção, importe um relatório real do sistema da escola e confira o resultado.
+- Layout do sistema da escola: reconhece `ALUNO: 1733 - NOME` (matrícula antes do nome), a turma dentro da tabela, as colunas `PARC(R$)`, `DESC(R$)`, `DESC(%)` (ignorada), `LIQUIDO(R$)`, `DT. PAGTO`, `V. PAGO(R$)`, as linhas `TOTAL POR RESPONSÁVEL` / `TOTAL POR ALUNO` e alunos com mais de um responsável financeiro.
+
+> O leitor é testado com relatórios **fictícios**: três layouts genéricos (`scripts/gerar-pdf-exemplo.py`) e uma réplica do layout do relatório de débitos da escola (`scripts/gerar-pdf-ieg.py` → `tests/fixtures/layout-ieg.pdf`). Ao importar um relatório real, confira alguns responsáveis com o PDF.
 
 ---
 
@@ -183,7 +185,7 @@ Preencha também o **e-mail remetente** (precisa estar autorizado no provedor), 
 - **Somente vencidas** (padrão): parcelas a vencer aparecem na conferência, mas não entram no total nem na mensagem. Há tolerância em dias.
 - **Valor cobrado**: **valor cheio** da parcela (sem desconto) — é o valor do débito na escola. Opção alternativa: valor líquido (com desconto). Ao trocar essa opção, as importações já feitas são **recalculadas**.
 - As demais regras valem para as **próximas** importações; cada importação guarda as regras usadas.
-- **Juros**: **desligados** por decisão da escola. Nada é calculado; as mensagens trazem apenas o aviso de que os valores estão sujeitos à atualização. (O cálculo de juros simples diários + multa continua no código, em `src/lib/billing/interest.ts`; para religar, troque `INTEREST_ENABLED` em `src/lib/settings.ts`.)
+- **Juros e multa** (Configurações → Juros e multa): multa única e juros por dia de atraso, sobre o valor cheio de cada parcela vencida, a partir do dia seguinte ao vencimento — como no boleto da escola (2% de multa e 0,033% ao dia: parcela de R$ 590,00 → multa R$ 11,80 e juros R$ 0,19 por dia). O valor diário é calculado em centavos antes de multiplicar pelos dias, e os centavos são arredondados para baixo. Sem taxas informadas, nada é calculado e as mensagens trazem apenas o aviso de que os valores estão sujeitos à atualização.
 - **Apagar**: cobranças podem ser apagadas na conferência (uma pelo detalhe, ou várias pela seleção); envios podem ser apagados no Histórico (somente administradores). Toda exclusão fica nos logs de acesso.
 - **CPF na mensagem**: não exibir, parcial (`***.***.***-45`, padrão) ou completo.
 - **Variáveis** disponíveis nos textos: `{{nome_responsavel}}`, `{{nome_aluno}}`, `{{lista_mensalidades}}`, `{{valor_total}}`, `{{detalhe_atualizacao}}`, `{{linha_cpf}}`, `{{turma}}` e outras (lista completa na tela).

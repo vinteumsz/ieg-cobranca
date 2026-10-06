@@ -29,8 +29,8 @@ export const TEMPLATE_VARIABLES: { name: string; description: string }[] = [
   { name: 'lista_mensalidades_linha', description: 'Mensalidades numa linha só (para modelo do WhatsApp)' },
   { name: 'quantidade_parcelas', description: 'Quantidade de parcelas em aberto' },
   { name: 'valor_total', description: 'Soma das parcelas em aberto' },
-  { name: 'detalhe_atualizacao', description: 'Valor original, multa, juros e valor atualizado (vazio se a escola não informou taxas)' },
-  { name: 'valor_atualizado', description: 'Valor com multa e juros (igual ao total se não houver taxas)' },
+  { name: 'detalhe_atualizacao', description: 'Multa, juros e valor atualizado até hoje (vazio se não houver taxas)' },
+  { name: 'valor_atualizado', description: 'Valor com multa e juros até hoje (igual ao total se não houver taxas)' },
   { name: 'data_atualizacao', description: 'Data do cálculo' },
   { name: 'linha_cpf', description: 'Linha com o CPF do responsável, conforme a configuração (ou vazio)' },
   { name: 'cpf_responsavel', description: 'CPF conforme a configuração (parcial, completo ou vazio)' },
@@ -83,9 +83,11 @@ export function buildVariables(charge: MessageCharge, ctx: MessageContext): Reco
 
   let detalhe = ''
   if (update.configured && ctx.show_updated_values) {
-    const rows = [`Valor original: ${formatCents(update.originalCents)}`]
-    if (update.fineCents > 0) rows.push(`Multa: ${formatCents(update.fineCents)}`)
-    if (ctx.daily_interest_pct) rows.push(`Juros acumulados: ${formatCents(update.interestCents)}`)
+    // O valor original já aparece em {{valor_total}} logo acima nos modelos padrão
+    const pct = (n: number) => `${String(n).replace('.', ',')}%`
+    const rows: string[] = []
+    if (update.fineCents > 0) rows.push(`Multa (${pct(ctx.fine_pct!)}): ${formatCents(update.fineCents)}`)
+    if (ctx.daily_interest_pct) rows.push(`Juros (${pct(ctx.daily_interest_pct)} ao dia): ${formatCents(update.interestCents)}`)
     rows.push(`Valor atualizado em ${formatDateBR(update.date)}: ${formatCents(update.updatedCents)}`)
     detalhe = '\n' + rows.join('\n')
   }

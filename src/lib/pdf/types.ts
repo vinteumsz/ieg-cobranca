@@ -13,6 +13,8 @@ export type ExtractedDocument = {
 }
 
 export type RawInstallment = {
+  /** Turma, quando o relatório traz a turma dentro da tabela de parcelas */
+  turma?: string
   receita: string
   parcela: string
   vencimento: string // yyyy-mm-dd

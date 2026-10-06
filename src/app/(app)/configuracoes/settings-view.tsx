@@ -1,14 +1,15 @@
 'use client'
 
-import { ChevronDown, Copy, FlaskConical, KeyRound, Mail, MessageCircle, MousePointerClick, Plus, ScrollText, Send, ShieldCheck, Trash2, Undo2, Zap } from 'lucide-react'
+import { ChevronDown, Copy, FlaskConical, KeyRound, Mail, MessageCircle, MousePointerClick, Percent, Plus, ScrollText, Send, ShieldCheck, Trash2, Undo2, Zap } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useToast } from '@/components/toast'
 import { apiFetch, Badge, Button, Card, CardHeader, cx, Field, Input, Notice, Select, Textarea } from '@/components/ui'
 import { composeMessages, type ComposeSettings } from '@/lib/billing/compose'
+import { dailyInterestFor, fineFor } from '@/lib/billing/interest'
 import type { Installment } from '@/lib/billing/rules'
-import { monthLabel } from '@/lib/format'
-import { OPEN_RULE_LABELS, type OpenRule, type Settings } from '@/lib/settings'
+import { formatCents, monthLabel, parseMoneyToCents } from '@/lib/format'
+import { INTEREST_ENABLED, OPEN_RULE_LABELS, type OpenRule, type Settings } from '@/lib/settings'
 
 type SecretStatus = { configured: boolean; source: 'tela' | 'ambiente' | null; hint: string }
 type SecretMeta = { label: string; sensitive: boolean; group: string; env: string }
@@ -24,8 +25,12 @@ type Props = {
   today: string
 }
 
+const pct = (n: number | null) => (n === null || n === undefined ? '' : String(n).replace('.', ','))
+const pctNum = (v: string) => (v.trim() ? Number(v.replace(',', '.')) || null : null)
+
 const SECTIONS = [
   ['envio', 'Forma de envio'],
+  ['juros', 'Juros e multa'],
   ['regras', 'Leitura e cobrança'],
   ['mensagens', 'Mensagens e CPF'],
   ['whatsapp', 'WhatsApp'],
@@ -41,6 +46,10 @@ export function SettingsView(props: Props) {
   const [saving, setSaving] = useState<string | null>(null)
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((x) => ({ ...x, [k]: v }))
   const manual = initial.send_mode === 'manual'
+
+  // Percentuais como texto (aceitam vírgula)
+  const [daily, setDaily] = useState(pct(initial.daily_interest_pct))
+  const [fine, setFine] = useState(pct(initial.fine_pct))
 
   // Modelos com padrão aplicado para edição
   const [waText, setWaText] = useState(initial.wa_text_template ?? defaults.waText)
@@ -77,10 +86,9 @@ export function SettingsView(props: Props) {
       cpf_display: s.cpf_display,
       show_updated_values: s.show_updated_values,
       email_team_name: s.email_team_name,
-      // Juros desativados por enquanto: o valor cobrado é o valor cheio das parcelas
-      daily_interest_pct: null,
-      fine_pct: null,
-      interest_start_date: null,
+      daily_interest_pct: INTEREST_ENABLED ? pctNum(daily) : null,
+      fine_pct: INTEREST_ENABLED ? pctNum(fine) : null,
+      interest_start_date: INTEREST_ENABLED ? s.interest_start_date : null,
       wa_mode: s.send_mode === 'manual' ? 'texto' : s.wa_mode,
       wa_template_name: s.wa_template_name,
       wa_template_language: s.wa_template_language,
@@ -97,13 +105,13 @@ export function SettingsView(props: Props) {
       },
       cs,
     )
-  }, [s, waText, waBody, waParams, emSubject, emBody, props.today])
+  }, [s, daily, fine, waText, waBody, waParams, emSubject, emBody, props.today])
 
   return (
     <div className="grid gap-8 lg:grid-cols-[200px_minmax(0,1fr)]">
       <nav className="hidden lg:block" aria-label="Seções">
         <ul className="sticky top-6 space-y-0.5 text-sm">
-          {SECTIONS.filter(([id]) => !manual || (id !== 'whatsapp' && id !== 'email')).map(([id, label]) => (
+          {SECTIONS.filter(([id]) => (!manual || (id !== 'whatsapp' && id !== 'email')) && (INTEREST_ENABLED || id !== 'juros')).map(([id, label]) => (
             <li key={id}>
               <a href={`#${id}`} className="block rounded-md px-3 py-1.5 text-ink-2 hover:bg-black/5 hover:text-ink">
                 {label}
@@ -133,6 +141,31 @@ export function SettingsView(props: Props) {
           <SaveRow loading={saving === 'envio'} onClick={() => save('envio', { send_mode: s.send_mode })} />
         </Section>
 
+        {/* ── Juros e multa ── */}
+        {INTEREST_ENABLED && (
+          <Section
+            id="juros"
+            icon={<Percent className="size-4" />}
+            title="Juros e multa"
+            description="Calculados sobre o valor cheio de cada parcela vencida, a partir do dia seguinte ao vencimento, como no boleto. Deixe em branco para não calcular."
+          >
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Multa por atraso (%)" htmlFor="fine" hint="Cobrada uma vez. Ex.: 2">
+                <Input id="fine" inputMode="decimal" value={fine} onChange={(e) => setFine(e.target.value)} placeholder="Não informado" />
+              </Field>
+              <Field label="Juros por dia (%)" htmlFor="daily" hint="1% ao mês = 0,033 ao dia">
+                <Input id="daily" inputMode="decimal" value={daily} onChange={(e) => setDaily(e.target.value)} placeholder="Não informado" />
+              </Field>
+              <Field label="Começar a contar em (opcional)" htmlFor="istart" hint="Antes desta data, não há juros nem multa.">
+                <Input id="istart" type="date" value={s.interest_start_date ?? ''} onChange={(e) => set('interest_start_date', e.target.value || null)} />
+              </Field>
+            </div>
+            <InterestExample fine={pctNum(fine)} daily={pctNum(daily)} />
+            <Check checked={s.show_updated_values} onChange={(v) => set('show_updated_values', v)} label="Mostrar multa, juros e valor atualizado nas mensagens" />
+            <SaveRow loading={saving === 'juros'} onClick={() => save('juros', { daily_interest_pct: daily.trim() || null, fine_pct: fine.trim() || null, interest_start_date: s.interest_start_date, show_updated_values: s.show_updated_values })} />
+          </Section>
+        )}
+
         {/* ── Regras ── */}
         <Section id="regras" icon={<ScrollText className="size-4" />} title="Leitura e cobrança" description="Valem para as próximas importações. Ao mudar o valor cobrado, as importações já feitas também são recalculadas.">
           <Field label="Considerar parcela em aberto quando" htmlFor="rule">
@@ -143,7 +176,7 @@ export function SettingsView(props: Props) {
             </Select>
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Valor cobrado de cada parcela" htmlFor="basis" hint="Sem juros. Ao salvar, as cobranças já importadas são recalculadas.">
+            <Field label="Valor cobrado de cada parcela" htmlFor="basis" hint="Ao salvar, as cobranças já importadas são recalculadas.">
               <Select id="basis" value={s.amount_basis} onChange={(e) => set('amount_basis', e.target.value as Settings['amount_basis'])}>
                 <option value="parcela">Valor cheio da parcela (padrão da escola)</option>
                 <option value="liquido">Valor líquido (com desconto)</option>
@@ -372,6 +405,28 @@ function Section({ id, icon, title, description, children }: { id: string; icon:
       <CardHeader title={<span className="flex items-center gap-2"><span className="text-brand-strong">{icon}</span>{title}</span>} description={description} />
       <div className="space-y-5 px-5 py-5">{children}</div>
     </Card>
+  )
+}
+
+/** Conferência rápida com um boleto: mesmo cálculo usado nas mensagens. */
+function InterestExample({ fine, daily }: { fine: number | null; daily: number | null }) {
+  const [value, setValue] = useState('590,00')
+  const base = parseMoneyToCents(value) ?? 0
+  if (!fine && !daily) return <p className="text-sm text-ink-3">Sem taxas informadas: nada é calculado e as mensagens só avisam que os valores estão sujeitos à atualização.</p>
+  const f = fineFor(base, fine)
+  const d = dailyInterestFor(base, daily)
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-subtle px-4 py-3 text-sm text-ink-2">
+      <span>Confira com um boleto: parcela de</span>
+      <span className="flex items-center gap-1">
+        R$
+        <Input value={value} onChange={(e) => setValue(e.target.value)} inputMode="decimal" className="h-8 w-28 tabular" aria-label="Valor da parcela de exemplo" />
+      </span>
+      <span aria-live="polite">
+        → multa <strong className="text-ink tabular">{formatCents(f)}</strong> · juros <strong className="text-ink tabular">{formatCents(d)}</strong> por dia · com 30 dias de atraso:{' '}
+        <strong className="text-ink tabular">{formatCents(base + f + d * 30)}</strong>
+      </span>
+    </div>
   )
 }
 

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { apiFetch, Badge, Button, Card, cx, EmptyState, Input, Modal, Notice } from '@/components/ui'
 import { useToast } from '@/components/toast'
 import type { ComposeSettings } from '@/lib/billing/compose'
+import { computeDebtUpdate } from '@/lib/billing/interest'
 import { hasCritical } from '@/lib/billing/rules'
 import { formatCents, formatCpf, formatDateTime, formatPhone, monthShortLabel, nameKey, onlyDigits } from '@/lib/format'
 import type { ChargeRow, ImportRow } from '@/lib/types'
@@ -113,6 +114,13 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
   // Canceladas podem ser selecionadas para apagar, mas não entram no envio
   const sendableIds = selectedCharges.filter((c) => c.status !== 'cancelado').map((c) => c.id)
   const totalOpen = charges.filter((c) => c.status !== 'cancelado').reduce((s, c) => s + c.total_open_cents, 0)
+  // Valor com multa e juros até hoje (mesmo cálculo das mensagens)
+  const updated = useMemo(
+    () => new Map(interestConfigured ? charges.map((c) => [c.id, computeDebtUpdate(c.installments, compose, compose.today).updatedCents]) : []),
+    [charges, compose, interestConfigured],
+  )
+  const totalUpdated = charges.filter((c) => c.status !== 'cancelado').reduce((s, c) => s + (updated.get(c.id) ?? c.total_open_cents), 0)
+  const pctLabel = (n: number | null) => `${String(n ?? 0).replace('.', ',')}%`
   const open = charges.find((c) => c.id === openId) ?? null
 
   function toggle(id: string) {
@@ -205,6 +213,9 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
           <div key={k} className="rounded-xl border border-line bg-surface px-4 py-3">
             <dt className="text-xs text-ink-3">{k}</dt>
             <dd className="mt-0.5 font-display text-lg font-semibold whitespace-nowrap sm:text-xl">{v}</dd>
+            {k === 'Total em aberto' && interestConfigured && (
+              <dd className="mt-0.5 text-xs whitespace-nowrap text-ink-3">com multa e juros: <span className="font-medium text-ink-2 tabular">{formatCents(totalUpdated)}</span></dd>
+            )}
           </div>
         ))}
       </dl>
@@ -216,11 +227,11 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
           ))}
         </div>
       )}
-      {!interestConfigured && (
-        <p className="mb-4 text-sm text-ink-3">
-          Valores pelo valor cheio das parcelas, sem juros. As mensagens avisam que “os valores estão sujeitos à atualização”.
-        </p>
-      )}
+      <p className="mb-4 text-sm text-ink-3">
+        {interestConfigured
+          ? `Valor cheio das parcelas vencidas. Multa de ${pctLabel(compose.fine_pct)} e juros de ${pctLabel(compose.daily_interest_pct)} ao dia a partir do dia seguinte ao vencimento; o valor atualizado até hoje aparece abaixo de cada total e nas mensagens.`
+          : 'Valores pelo valor cheio das parcelas, sem juros. As mensagens avisam que “os valores estão sujeitos à atualização”.'}
+      </p>
 
       <Card>
         <div className="flex flex-col gap-3 border-b border-line p-4">
@@ -318,7 +329,12 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
                         {monthsSummary(c)}
                       </td>
                       <td className="px-2 py-3 text-right tabular">{c.open_count}</td>
-                      <td className="px-3 py-3 text-right font-semibold whitespace-nowrap tabular">{formatCents(c.total_open_cents)}</td>
+                      <td className="px-3 py-3 text-right whitespace-nowrap tabular">
+                        <span className="font-semibold">{formatCents(c.total_open_cents)}</span>
+                        {updated.has(c.id) && updated.get(c.id) !== c.total_open_cents && (
+                          <span className="block text-[11px] text-ink-3" title="Com multa e juros até hoje">c/ juros {formatCents(updated.get(c.id)!)}</span>
+                        )}
+                      </td>
                       <td className="px-3 py-3">
                         <p className="truncate text-[13px] text-ink-2">{c.guardian_phone ? formatPhone(c.guardian_phone) : '—'}</p>
                         <div className="mt-1"><ChannelBadge status={c.wa_status} available={!!c.guardian_phone} missingLabel="sem celular" /></div>
@@ -364,7 +380,12 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
                           {needsReview(c) && <AlertTriangle className="size-4 shrink-0 text-bad" />}
                           <span className="truncate">{c.guardian_name || 'Não identificado'}</span>
                         </p>
-                        <span className="font-semibold whitespace-nowrap tabular">{formatCents(c.total_open_cents)}</span>
+                        <span className="text-right whitespace-nowrap tabular">
+                          <span className="font-semibold">{formatCents(c.total_open_cents)}</span>
+                          {updated.has(c.id) && updated.get(c.id) !== c.total_open_cents && (
+                            <span className="block text-[11px] text-ink-3">c/ juros {formatCents(updated.get(c.id)!)}</span>
+                          )}
+                        </span>
                       </div>
                       <p className="mt-0.5 truncate text-sm text-ink-2">
                         {c.student_name}

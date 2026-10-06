@@ -103,3 +103,52 @@ describe('regras configuráveis', () => {
     expect(r.installments.filter((i) => !i.cobrar).every((i) => i.emAbertoCents === 60300)).toBe(true)
   })
 })
+
+describe('layout do sistema da escola (ALUNO: matrícula - nome, turma na tabela)', () => {
+  it('identifica aluno depois da matrícula, responsável, contatos e turma', async () => {
+    const res = await load('layout-ieg.pdf')
+    expect(res.records.map((r) => [r.matricula, r.aluno, r.responsavel])).toEqual([
+      ['1733', 'ANA CLARA SILVA CAVALCANTI', 'THIAGO DE OLIVEIRA COSTA CAVALCANTI'],
+      ['1802', 'MIGUEL ARAÚJO LIMA', 'PATRÍCIA ARAÚJO LIMA'],
+      ['1650', 'BEATRIZ MOURA COSTA', 'CARLOS MOURA COSTA'],
+      ['1650', 'BEATRIZ MOURA COSTA', 'FERNANDA MOURA COSTA'],
+      ['1901', 'LUCAS BARBOSA NETO', 'JOSÉ BARBOSA NETO'],
+      ['1902', 'LARA BARBOSA NETO', 'JOSÉ BARBOSA NETO'],
+      ['2010', 'DAVI RÊGO', 'HELENA RÊGO'],
+    ])
+    const ana = res.records[0]
+    expect(ana).toMatchObject({ cpf: '529.982.247-25', email: 'enterltda@hotmail.com', celular: '(83)98767-7071', turma: '7° ANO' })
+    expect(res.records[1].celular).toBe('(83)99812-3344') // telefone residencial não vira celular
+    expect(res.records[6]).toMatchObject({ celular: '', email: '', turma: '2° ANO' })
+    expect(res.records.every((r) => r.avisos.length === 0)).toBe(true)
+  })
+
+  it('lê as colunas PARC(R$), DESC(R$), LIQUIDO(R$) e ignora o DESC(%)', async () => {
+    const res = await load('layout-ieg.pdf')
+    expect(res.records[0].parcelas).toEqual([
+      expect.objectContaining({ turma: '7° ANO', receita: 'MENSALIDADE', parcela: '08/11', vencimento: '2026-09-30', valorParcelaCents: 62600, descontoCents: 5008, valorLiquidoCents: 57592, dataPagamento: null, valorPagoCents: null, avisos: [] }),
+    ])
+    expect(res.records[1].parcelas[0]).toMatchObject({ valorParcelaCents: 125000, descontoCents: 0, valorLiquidoCents: 125000 })
+    expect(res.records[4].parcelas[0]).toMatchObject({ dataPagamento: '2026-08-05', valorPagoCents: 80100 })
+    // tabela que continua na página seguinte
+    expect(res.records[5].parcelas).toHaveLength(11)
+    expect(res.records.flatMap((r) => r.parcelas).every((p) => p.avisos.length === 0)).toBe(true)
+  })
+
+  it('monta as cobranças pelo valor cheio, sem alertas de leitura', async () => {
+    const res = await load('layout-ieg.pdf')
+    const { charges, stats } = buildCharges(res.records, RULES, TODAY)
+    const by = (aluno: string, resp: string) => charges.find((c) => c.student_name === aluno && c.guardian_name === resp)!
+    expect(by('Ana Clara Silva Cavalcanti', 'Thiago de Oliveira Costa Cavalcanti')).toMatchObject({ total_open_cents: 62600, open_count: 1, class_name: '7° ANO', guardian_phone: '5583987677071' })
+    expect(by('Miguel Araújo Lima', 'Patrícia Araújo Lima')).toMatchObject({ total_open_cents: 3 * 125000, open_count: 3, upcoming_count: 1 })
+    expect(by('Beatriz Moura Costa', 'Carlos Moura Costa').total_open_cents).toBe(2 * 31300)
+    expect(by('Beatriz Moura Costa', 'Fernanda Moura Costa').total_open_cents).toBe(31300)
+    expect(by('Lucas Barbosa Neto', 'José Barbosa Neto')).toMatchObject({ total_open_cents: 89000, open_count: 1 })
+    expect(by('Lara Barbosa Neto', 'José Barbosa Neto')).toMatchObject({ total_open_cents: 8 * 74000, open_count: 8, upcoming_count: 3 })
+    expect(by('Davi Rêgo', 'Helena Rêgo').warnings.map((w) => w.code)).toEqual(expect.arrayContaining(['sem_celular', 'sem_email']))
+    expect(charges).toHaveLength(7)
+    expect(stats.comAlertaCritico).toBe(0)
+    expect(charges.flatMap((c) => c.warnings.map((w) => w.code))).not.toContain('sem_aluno')
+    expect(charges.flatMap((c) => c.warnings.map((w) => w.code))).not.toContain('valores_inconsistentes')
+  })
+})

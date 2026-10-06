@@ -168,11 +168,10 @@ export function effective(s: Settings) {
 export type EffectiveSettings = ReturnType<typeof effective>
 
 /**
- * Cálculo de juros e multa. Desligado por decisão da escola: o valor do débito é o valor
- * cheio das parcelas, e as mensagens só avisam que os valores estão sujeitos à atualização.
- * Para religar no futuro, troque para `true` e volte a exibir a seção nas Configurações.
+ * Cálculo de juros e multa (Configurações → Juros e multa). Com `false`, nada é calculado
+ * mesmo com taxas salvas e a seção some das Configurações.
  */
-export const INTEREST_ENABLED = false
+export const INTEREST_ENABLED = true
 
 export function normalizeSettings(row: Partial<Settings> | null | undefined): Settings {
   const s = { ...DEFAULT_SETTINGS, ...(row ?? {}) } as Settings

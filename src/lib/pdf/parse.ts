@@ -7,6 +7,9 @@
 //  • rótulos numa linha e valores na linha de baixo (layout em colunas)
 //  • células vazias na tabela (ex.: desconto em branco) — resolvidas pela posição
 //    da coluna no cabeçalho ou pela coerência dos valores
+//  • layout do sistema da escola: "ALUNO: 1733 - NOME", turma dentro da tabela,
+//    colunas abreviadas (PARC(R$), DESC(R$), DESC(%)), linhas de TOTAL e mais de
+//    um responsável financeiro para o mesmo aluno
 // Tudo que parece estranho vira um AVISO para a equipe conferir.
 
 import { CPF_RE, DATE_RE, EMAIL_RE, MONEY_RE, normalizeKeepLength, parseDateBR, parseMoneyToCents } from '../format'
@@ -15,7 +18,7 @@ import type { Cell, Line, ParseResult, RawInstallment, RawRecord } from './types
 
 type FieldKey =
   | 'aluno' | 'responsavel' | 'cpf' | 'cpf_aluno' | 'email' | 'celular' | 'endereco' | 'bairro'
-  | 'cidade' | 'cep' | 'uf' | 'turma' | 'matricula' | 'nascimento' | 'rg'
+  | 'cidade' | 'cep' | 'uf' | 'turma' | 'matricula' | 'nascimento' | 'rg' | 'telfixo'
 
 const LABELS: { key: FieldKey; re: RegExp; needsColon?: boolean }[] = [
   { key: 'responsavel', re: /NOME DO RESPONSAVEL(?: FINANCEIRO)?|RESPONSAVEL FINANCEIRO|RESP\.? FINANCEIRO|RESPONSAVEL\s*\(A\)|RESPONSAVEL/y },
@@ -23,6 +26,8 @@ const LABELS: { key: FieldKey; re: RegExp; needsColon?: boolean }[] = [
   { key: 'cpf_aluno', re: /CPF DO ALUNO\s*\(A\)|CPF DO ALUNO/y },
   { key: 'cpf', re: /CPF\s*\/\s*CNPJ|CPF DO RESPONSAVEL(?: FINANCEIRO)?|CPF/y },
   { key: 'email', re: /E-?\s?MAILS?|CORREIO ELETRONICO/y },
+  // Telefone residencial/comercial: reconhecido só para não ser confundido com o celular
+  { key: 'telfixo', re: /TEL\.?\s*RESID(?:ENCIAL)?\.?|TEL\.?\s*COM(?:ERCIAL)?\.?|TELEFONE (?:RESIDENCIAL|COMERCIAL|FIXO)|FONE (?:RESIDENCIAL|COMERCIAL)/y },
   { key: 'celular', re: /CELULAR\s*\/\s*WHATSAPP|CELULAR|WHATSAPP|TELEFONES?|FONES?|CEL\./y },
   { key: 'endereco', re: /ENDERECO/y },
   { key: 'bairro', re: /BAIRRO/y },
@@ -104,22 +109,25 @@ function segmentLine(line: Line): Seg[] {
 
 // ─── Tabela de parcelas ────────────────────────────────────────────────────
 
-type ColKey = 'receita' | 'parcela' | 'vencimento' | 'valorParcela' | 'desconto' | 'valorLiquido' | 'dataPagamento' | 'valorPago'
+type ColKey = 'turma' | 'receita' | 'parcela' | 'vencimento' | 'valorParcela' | 'desconto' | 'descontoPct' | 'valorLiquido' | 'dataPagamento' | 'valorPago'
 type Anchors = Partial<Record<ColKey, number>>
 
 const COLS: [ColKey, RegExp][] = [
-  ['valorParcela', /VALOR DA PARCELA|VALOR PARCELA|VLR\.? ?PARCELA|VL\.? ?PARCELA|VALOR ORIGINAL|VALOR BRUTO/g],
+  ['valorParcela', /VALOR DA PARCELA|VALOR PARCELA|VLR\.? ?PARCELA|VL\.? ?PARCELA|VALOR ORIGINAL|VALOR BRUTO|PARC(?:ELA)?\.?\s*\(R\$\)/g],
   ['valorLiquido', /VALOR LIQUIDO|VLR\.? ?LIQUIDO|VL\.? ?LIQUIDO|V\. ?LIQUIDO|LIQUIDO/g],
   ['valorPago', /VALOR PAGO|VLR\.? ?PAGO|VL\.? ?PAGO|V\. ?PAGO/g],
   ['dataPagamento', /DATA DE PAGAMENTO|DATA DO PAGAMENTO|DATA PAGAMENTO|DATA PGTO|DT\.? ?PAG(?:AMENTO|TO)?\.?|PAGO EM|PAGAMENTO/g],
-  ['desconto', /DESCONTOS?|DESC\./g],
+  // Percentual de desconto (DESC(%)) é reconhecido para ser ignorado, não confundido com valores
+  ['descontoPct', /DESC(?:ONTO)?\.?\s*\(%\)|DESC(?:ONTO)?\.?\s*%|%\s*DESC(?:ONTO)?/g],
+  ['desconto', /DESCONTOS?(?:\s*\(R\$\))?|DESC\.?\s*\(R\$\)|DESC\./g],
   ['vencimento', /DATA DE VENCIMENTO|DATA VENC\.?|VENCIMENTO|VENC\.?/g],
   ['parcela', /N[º°O]\.? ?PARC(?:ELA)?|PARCELA|PARC\.?/g],
   ['receita', /C\. ?RECEITA|COD\.? ?RECEITA|RECEITA|DESCRICAO|HISTORICO/g],
+  ['turma', /SERIE\s*\/\s*TURMA|TURMA|SERIE/g],
 ]
 
 /** Texto da linha + função que converte posição no texto em coordenada x. */
-function joinWithPositions(line: Line): { text: string; x: (i: number) => number } {
+function joinWithPositions(line: Line): { text: string; x: (i: number) => number; spans: { start: number; cell: Cell }[] } {
   let text = ''
   const spans: { start: number; cell: Cell }[] = []
   line.cells.forEach((cell, k) => {
@@ -129,6 +137,7 @@ function joinWithPositions(line: Line): { text: string; x: (i: number) => number
   })
   return {
     text,
+    spans,
     x: (i: number) => {
       let span = spans[0]
       for (const s of spans) if (s.start <= i) span = s
@@ -173,6 +182,7 @@ function tokenizeRow(line: Line): { text: string; tokens: Token[] } {
     const s = m.index!
     const e = s + m[0].length
     if (tokens.some((t) => s < t.end && e > t.start)) continue
+    if (/^\s?%/.test(text.slice(e, e + 2))) continue // percentual (ex.: 8,00% de desconto), não é valor
     tokens.push({ kind: 'money', raw: m[0], start: s, end: e, xc: (x(s) + x(e - 1)) / 2 })
   }
   tokens.sort((a, b) => a.start - b.start)
@@ -220,19 +230,58 @@ function semanticAssign(before: number[], after: number[], hasPayDate: boolean):
 }
 
 function positionalAssign(moneys: Token[], anchors: Anchors): Values | null {
-  const cols: ColKey[] = (['valorParcela', 'desconto', 'valorLiquido', 'valorPago'] as ColKey[]).filter((k) => anchors[k] !== undefined)
-  if (cols.length < 2) return null
+  const cols: ColKey[] = (['valorParcela', 'desconto', 'descontoPct', 'valorLiquido', 'valorPago'] as ColKey[]).filter((k) => anchors[k] !== undefined)
+  if (cols.filter((c) => c !== 'descontoPct').length < 2) return null
   const v: Values = { p: null, d: null, l: null, pago: null }
-  const map: Record<string, keyof Values> = { valorParcela: 'p', desconto: 'd', valorLiquido: 'l', valorPago: 'pago' }
+  const map: Record<string, keyof Values | null> = { valorParcela: 'p', desconto: 'd', descontoPct: null, valorLiquido: 'l', valorPago: 'pago' }
   for (const t of moneys) {
     let best = cols[0]
     for (const c of cols) if (Math.abs(anchors[c]! - t.xc) < Math.abs(anchors[best]! - t.xc)) best = c
     const slot = map[best]
+    if (slot === null) continue // coluna de percentual
     if (v[slot] !== null) return null // duas moedas na mesma coluna: posição não confiável
     v[slot] = parseMoneyToCents(t.raw)
   }
   if (v.l === null && v.p !== null && anchors.valorLiquido === undefined) v.l = v.p - (v.d ?? 0)
   return v
+}
+
+const PARCELA_RE = /^\d{1,2}\/\d{1,3}$/
+const trimSep = (v: string) => v.replace(/\s+/g, ' ').replace(/^[-–|\s]+|[-–|\s]+$/g, '')
+
+/** Separa o início da linha (antes do vencimento) em turma, receita e número da parcela. */
+function splitPrefix(line: Line, vencStart: number, anchors: Anchors | null): { turma: string; receita: string; parcela: string } {
+  const { text, x, spans } = joinWithPositions(line)
+
+  // Com a coluna TURMA no cabeçalho, cada célula vai para a coluna mais próxima
+  if (anchors?.turma !== undefined && anchors.receita !== undefined) {
+    const keys = (['turma', 'receita', 'parcela'] as const).filter((k) => anchors[k] !== undefined)
+    const bucket: Record<string, string[]> = { turma: [], receita: [], parcela: [] }
+    for (const { start, cell } of spans) {
+      const end = Math.min(start + cell.text.length, vencStart)
+      if (end <= start) continue
+      const seg = text.slice(start, end).trim()
+      if (!seg) continue
+      const xc = (x(start) + x(end - 1)) / 2
+      let best: (typeof keys)[number] = keys[0]
+      for (const k of keys) if (Math.abs(anchors[k]! - xc) < Math.abs(anchors[best]! - xc)) best = k
+      bucket[best].push(seg)
+    }
+    let parcela = trimSep(bucket.parcela.join(' '))
+    const receitaWords = trimSep(bucket.receita.join(' ')).split(' ').filter(Boolean)
+    if (!parcela && receitaWords.length > 1 && PARCELA_RE.test(receitaWords[receitaWords.length - 1])) parcela = receitaWords.pop()!
+    return { turma: trimSep(bucket.turma.join(' ')), receita: receitaWords.join(' '), parcela }
+  }
+
+  const words = text.slice(0, vencStart).replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+  let parcela = ''
+  let idx = words.findIndex((w) => PARCELA_RE.test(w))
+  if (idx < 0 && words.length > 1 && /^\d{1,3}$/.test(words[words.length - 1])) idx = words.length - 1
+  if (idx >= 0) {
+    parcela = words[idx]
+    words.splice(idx, 1)
+  }
+  return { turma: '', receita: trimSep(words.join(' ')), parcela }
 }
 
 const TOTAL_RE = /^(?:SUB)?TOTA(?:L|IS)|\bTOTAL\b|^SALDO|^RESUMO/
@@ -268,19 +317,11 @@ function tryParseRow(line: Line, anchors: Anchors | null): RawInstallment | null
   if (!values || (!consistent(values) && consistent(semantic))) values = semantic
   if (!consistent(values)) avisos.push('Valores da parcela não batem (parcela − desconto ≠ líquido). Confira no relatório.')
 
-  // Receita e número da parcela: o que vem antes do vencimento
-  const prefix = text.slice(0, venc.start).replace(/\s+/g, ' ').trim()
-  const words = prefix.split(' ').filter(Boolean)
-  let parcela = ''
-  let idx = words.findIndex((w) => /^\d{1,2}\/\d{1,2}$/.test(w))
-  if (idx < 0 && words.length > 1 && /^\d{1,3}$/.test(words[words.length - 1])) idx = words.length - 1
-  if (idx >= 0) {
-    parcela = words[idx]
-    words.splice(idx, 1)
-  }
-  const receita = words.join(' ').replace(/^[-–|\s]+|[-–|\s]+$/g, '')
+  // Turma, receita e número da parcela: o que vem antes do vencimento
+  const { turma, receita, parcela } = splitPrefix(line, venc.start, anchors)
 
   return {
+    ...(turma ? { turma } : {}),
     receita,
     parcela,
     vencimento: parseDateBR(venc.raw)!,
@@ -310,12 +351,20 @@ type Block = {
   parcelas: RawInstallment[]
   pagina: number
   lastPerson: Person
+  /** Qual rótulo abriu o bloco: no layout "por aluno", um novo responsável continua o mesmo aluno */
+  startedBy: Person
 }
 
 const newBlock = (page: number): Block => ({
   aluno: '', responsavel: '', turma: '', matricula: '', cpfs: [], emails: [], phones: [],
-  headerText: [], parcelas: [], pagina: page, lastPerson: null,
+  headerText: [], parcelas: [], pagina: page, lastPerson: null, startedBy: null,
 })
+
+/** "1733 - ANA CLARA SILVA" → matrícula 1733 e nome. */
+function splitMatricula(v: string): { matricula: string; nome: string } {
+  const m = v.match(/^\s*(\d{1,10})\s*(?:[-–—:.]\s*)?(?=\p{L})(.+)$/u)
+  return m ? { matricula: m[1], nome: m[2] } : { matricula: '', nome: v }
+}
 
 /** Remove "lixo" que às vezes gruda no nome (CPF, números, rótulos sem dois-pontos). */
 function cleanName(v: string): string {
@@ -382,11 +431,23 @@ export function parseReport(lines: Line[]): ParseResult {
       const value = raw.trim()
       if (!value) continue
       if (key === 'aluno' || key === 'responsavel') {
-        const name = cleanName(value)
+        const { matricula, nome } = key === 'aluno' ? splitMatricula(value) : { matricula: '', nome: value }
+        const name = cleanName(nome)
         if (!name) continue
-        if (cur && (cur.parcelas.length > 0 || cur[key])) flush()
-        if (!cur) cur = newBlock(page)
+        let inherit: Pick<Block, 'aluno' | 'turma' | 'matricula'> | null = null
+        if (cur && (cur.parcelas.length > 0 || cur[key])) {
+          // Mesmo aluno com outro responsável financeiro (cada um paga uma parte)
+          const c = cur as Block
+          if (key === 'responsavel' && c.startedBy === 'aluno' && c.aluno) inherit = { aluno: c.aluno, turma: c.turma, matricula: c.matricula }
+          flush()
+        }
+        if (!cur) {
+          cur = newBlock(page)
+          cur.startedBy = inherit ? 'aluno' : key
+          if (inherit) Object.assign(cur, inherit)
+        }
         cur[key] = name
+        if (matricula) cur.matricula = matricula
         cur.lastPerson = key
         // CPF colado no nome ("MARIA SILVA 123.456.789-09")
         const cpfInName = value.match(CPF_RE)?.[0]
@@ -417,11 +478,22 @@ export function parseReport(lines: Line[]): ParseResult {
       continue
     }
 
+    // Linhas de total ("TOTAL POR RESPONSÁVEL", "TOTAL POR ALUNO", "TOTAL GERAL") não são parcelas
+    // nem dados; o total do aluno encerra o bloco dele.
+    if (/^(?:SUB)?TOTA(?:L|IS)\b/.test(norm.trim())) {
+      if (/^TOTA(?:L|IS) (?:POR|DO|DA) ALUNO/.test(norm.trim())) flush()
+      pending = null
+      continue
+    }
+
     const row = tryParseRow(line, anchors)
     if (row) {
       pending = null
-      if (cur) (cur as Block).parcelas.push(row)
-      else orphans++
+      if (cur) {
+        const c = cur as Block
+        c.parcelas.push(row)
+        if (row.turma && !c.turma) c.turma = row.turma
+      } else orphans++
       continue
     }
 
