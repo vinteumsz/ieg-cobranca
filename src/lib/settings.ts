@@ -128,8 +128,9 @@ export const DEFAULT_SETTINGS: Settings = {
   only_overdue: true,
   grace_days: 0,
   amount_basis: 'parcela',
-  daily_interest_pct: null,
-  fine_pct: null,
+  // Regras do boleto/sistema da escola: multa de 2% e juros de 0,033% ao dia (1% ao mês)
+  daily_interest_pct: 0.033,
+  fine_pct: 2,
   interest_start_date: null,
   show_updated_values: true,
   cpf_display: 'parcial',
@@ -173,10 +174,13 @@ export type EffectiveSettings = ReturnType<typeof effective>
  */
 export const INTEREST_ENABLED = true
 
+// Taxa em branco no banco = regra padrão da escola; 0 = não cobrar.
+const rate = (v: unknown, def: number | null) => (v === null || v === undefined || v === '' ? def : Number(v))
+
 export function normalizeSettings(row: Partial<Settings> | null | undefined): Settings {
   const s = { ...DEFAULT_SETTINGS, ...(row ?? {}) } as Settings
-  s.daily_interest_pct = !INTEREST_ENABLED || s.daily_interest_pct === null || s.daily_interest_pct === undefined ? null : Number(s.daily_interest_pct)
-  s.fine_pct = !INTEREST_ENABLED || s.fine_pct === null || s.fine_pct === undefined ? null : Number(s.fine_pct)
+  s.daily_interest_pct = INTEREST_ENABLED ? rate(row?.daily_interest_pct, DEFAULT_SETTINGS.daily_interest_pct) : null
+  s.fine_pct = INTEREST_ENABLED ? rate(row?.fine_pct, DEFAULT_SETTINGS.fine_pct) : null
   if (!INTEREST_ENABLED) s.interest_start_date = null
   return s
 }

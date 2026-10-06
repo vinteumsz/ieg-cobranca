@@ -118,25 +118,36 @@ export function ChargeDrawer({ charge, compose, recentAt, sendMode, onClose, onU
           <SectionTitle>Mensalidades em aberto</SectionTitle>
           <div className="overflow-hidden rounded-xl border border-line bg-surface">
             <ul className="divide-y divide-line">
-              {charged.map((i, k) => (
-                <li key={k} className="flex items-start justify-between gap-4 px-4 py-2.5">
-                  <div className="min-w-0">
-                    <p className="font-medium">{i.mes}</p>
-                    <p className="text-xs text-ink-3">
-                      Venc. {formatDateBR(i.vencimento)}
-                      {i.receita ? ` · ${i.receita}` : ''}
-                      {i.parcela ? ` · parc. ${i.parcela}` : ''}
-                      {i.valorPagoCents ? ` · pago ${formatCents(i.valorPagoCents)}` : ''}
-                    </p>
-                    {i.avisos.map((a) => (
-                      <p key={a} className="mt-1 flex items-center gap-1 text-xs text-bad">
-                        <AlertTriangle className="size-3" /> {a}
+              {charged.map((i, k) => {
+                const d = msgs.update.configured ? msgs.update.items[k] : null
+                return (
+                  <li key={k} className="flex items-start justify-between gap-4 px-4 py-2.5">
+                    <div className="min-w-0">
+                      <p className="font-medium">{i.mes}</p>
+                      <p className="text-xs text-ink-3">
+                        Venc. {formatDateBR(i.vencimento)}
+                        {i.receita ? ` · ${i.receita}` : ''}
+                        {i.parcela ? ` · parc. ${i.parcela}` : ''}
+                        {i.valorPagoCents ? ` · pago ${formatCents(i.valorPagoCents)}` : ''}
                       </p>
-                    ))}
-                  </div>
-                  <span className="tabular font-medium whitespace-nowrap">{formatCents(i.emAbertoCents)}</span>
-                </li>
-              ))}
+                      {d && d.days > 0 && (
+                        <p className="text-xs text-ink-3 tabular">
+                          multa {formatCents(d.fineCents)} · juros {formatCents(d.interestCents)} ({d.days} {d.days === 1 ? 'dia' : 'dias'})
+                        </p>
+                      )}
+                      {i.avisos.map((a) => (
+                        <p key={a} className="mt-1 flex items-center gap-1 text-xs text-bad">
+                          <AlertTriangle className="size-3" /> {a}
+                        </p>
+                      ))}
+                    </div>
+                    <div className="text-right whitespace-nowrap tabular">
+                      <span className="font-medium">{formatCents(i.emAbertoCents)}</span>
+                      {d && d.days > 0 && <span className="block text-xs text-ink-3">a pagar {formatCents(d.totalCents)}</span>}
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
             <div className="flex items-center justify-between border-t border-line bg-subtle px-4 py-3">
               <span className="font-semibold">Total</span>

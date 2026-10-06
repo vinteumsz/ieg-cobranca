@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeDebtUpdate, dailyInterestFor, fineFor } from '@/lib/billing/interest'
+import { computeDebtUpdate, dailyInterestFor, fineFor, lateDays, lateFrom } from '@/lib/billing/interest'
 import { buildVariables, renderMetaTemplate, renderTemplate, sanitizeTemplateParam, templateParamValues } from '@/lib/billing/messages'
 import type { Installment } from '@/lib/billing/rules'
 import {
@@ -73,21 +73,37 @@ describe('juros', () => {
     expect(u.interestCents).toBe(Math.round(100000 * 0.033 * 20 / 100)) // 20 dias
     expect(u.updatedCents).toBe(100000 + 2000 + 660)
   })
-  it('bate com o boleto da escola: parcela de R$ 590,00 vencida em 02/11/2026', () => {
+  it('reproduz o relatório do sistema da escola (R$ 563,00, vencimentos no dia 20)', () => {
+    const regras = { daily_interest_pct: 0.033, fine_pct: 2, interest_start_date: null }
+    const parcelas = [2, 3, 4, 5, 6, 7, 8, 9].map((m) => inst(`2026-${String(m).padStart(2, '0')}-20`, 56300))
+    const u = computeDebtUpdate(parcelas, regras, '2026-10-05')
+    // MULTA(R$) e JUROS(R$) do relatório, fevereiro a setembro
+    expect(u.items.map((i) => i.fineCents)).toEqual(Array(8).fill(1126))
+    expect(u.items.map((i) => i.interestCents)).toEqual([4275, 3743, 3192, 2622, 2014, 1463, 874, 285])
+    expect(u.items.map((i) => i.totalCents)).toEqual([61701, 61169, 60618, 60048, 59440, 58889, 58300, 57711])
+    expect(u).toMatchObject({ originalCents: 450400, fineCents: 9008, interestCents: 18468, updatedCents: 477876 })
+  })
+  it('atraso conta a partir do primeiro dia útil depois do vencimento', () => {
+    expect(lateFrom('2026-08-20')).toBe('2026-08-21') // quinta → sexta
+    expect(lateFrom('2026-02-20')).toBe('2026-02-23') // sexta → segunda
+    expect(lateFrom('2026-06-20')).toBe('2026-06-22') // sábado → segunda
+    expect(lateFrom('2026-09-20')).toBe('2026-09-21') // domingo → segunda
+    expect(lateDays('2026-02-20', '2026-02-22')).toBe(0) // fim de semana: ainda sem atraso
+    expect(lateDays('2026-02-20', '2026-02-23')).toBe(1)
+  })
+  it('bate com o boleto: R$ 590,00 vencida em 02/11/2026', () => {
     const regras = { daily_interest_pct: 0.033, fine_pct: 2, interest_start_date: null }
     const p = [inst('2026-11-02', 59000)]
     expect(computeDebtUpdate(p, regras, '2026-11-02')).toMatchObject({ fineCents: 0, interestCents: 0, updatedCents: 59000 })
     // "A partir de 03/11/2026 cobrar multa de R$ 11,80" e "juros de R$ 0,19 por dia"
     expect(computeDebtUpdate(p, regras, '2026-11-03')).toMatchObject({ fineCents: 1180, interestCents: 19, updatedCents: 59000 + 1180 + 19 })
-    expect(computeDebtUpdate(p, regras, '2026-12-03').interestCents).toBe(31 * 19)
     expect(dailyInterestFor(59000, 0.033)).toBe(19)
-    expect(fineFor(59000, 2)).toBe(1180)
-    // centavos para baixo (R$ 626,00 → R$ 0,2065… por dia → R$ 0,20)
-    expect(dailyInterestFor(62600, 0.033)).toBe(20)
+    expect(dailyInterestFor(56300, 0.033)).toBe(19)
+    expect(fineFor(56300, 2)).toBe(1126)
   })
   it('respeita a data inicial de cobrança dos juros', () => {
     const u = computeDebtUpdate([inst('2026-04-15', 100000)], { daily_interest_pct: 0.1, fine_pct: null, interest_start_date: '2026-10-01' }, '2026-10-05')
-    expect(u.interestCents).toBe(Math.round(100000 * 0.1 * 4 / 100))
+    expect(u.interestCents).toBe(100 * 5) // 01/10 a 05/10
   })
 })
 

@@ -147,14 +147,14 @@ export function SettingsView(props: Props) {
             id="juros"
             icon={<Percent className="size-4" />}
             title="Juros e multa"
-            description="Calculados sobre o valor cheio de cada parcela vencida, a partir do dia seguinte ao vencimento, como no boleto. Deixe em branco para não calcular."
+            description="Como no sistema da escola: sobre o valor cheio de cada parcela vencida, contando os dias a partir do primeiro dia útil depois do vencimento (vencimento na sexta, no sábado ou no domingo começa a contar na segunda). Use 0 para não cobrar."
           >
             <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Multa por atraso (%)" htmlFor="fine" hint="Cobrada uma vez. Ex.: 2">
-                <Input id="fine" inputMode="decimal" value={fine} onChange={(e) => setFine(e.target.value)} placeholder="Não informado" />
+              <Field label="Multa por atraso (%)" htmlFor="fine" hint="Cobrada uma vez. Padrão da escola: 2">
+                <Input id="fine" inputMode="decimal" value={fine} onChange={(e) => setFine(e.target.value)} placeholder="0" />
               </Field>
-              <Field label="Juros por dia (%)" htmlFor="daily" hint="1% ao mês = 0,033 ao dia">
-                <Input id="daily" inputMode="decimal" value={daily} onChange={(e) => setDaily(e.target.value)} placeholder="Não informado" />
+              <Field label="Juros por dia (%)" htmlFor="daily" hint="Padrão da escola: 0,033 (1% ao mês)">
+                <Input id="daily" inputMode="decimal" value={daily} onChange={(e) => setDaily(e.target.value)} placeholder="0" />
               </Field>
               <Field label="Começar a contar em (opcional)" htmlFor="istart" hint="Antes desta data, não há juros nem multa.">
                 <Input id="istart" type="date" value={s.interest_start_date ?? ''} onChange={(e) => set('interest_start_date', e.target.value || null)} />
@@ -162,7 +162,7 @@ export function SettingsView(props: Props) {
             </div>
             <InterestExample fine={pctNum(fine)} daily={pctNum(daily)} />
             <Check checked={s.show_updated_values} onChange={(v) => set('show_updated_values', v)} label="Mostrar multa, juros e valor atualizado nas mensagens" />
-            <SaveRow loading={saving === 'juros'} onClick={() => save('juros', { daily_interest_pct: daily.trim() || null, fine_pct: fine.trim() || null, interest_start_date: s.interest_start_date, show_updated_values: s.show_updated_values })} />
+            <SaveRow loading={saving === 'juros'} onClick={() => save('juros', { daily_interest_pct: daily.trim() || '0', fine_pct: fine.trim() || '0', interest_start_date: s.interest_start_date, show_updated_values: s.show_updated_values })} />
           </Section>
         )}
 
@@ -410,9 +410,9 @@ function Section({ id, icon, title, description, children }: { id: string; icon:
 
 /** Conferência rápida com um boleto: mesmo cálculo usado nas mensagens. */
 function InterestExample({ fine, daily }: { fine: number | null; daily: number | null }) {
-  const [value, setValue] = useState('590,00')
+  const [value, setValue] = useState('563,00')
   const base = parseMoneyToCents(value) ?? 0
-  if (!fine && !daily) return <p className="text-sm text-ink-3">Sem taxas informadas: nada é calculado e as mensagens só avisam que os valores estão sujeitos à atualização.</p>
+  if (!fine && !daily) return <p className="text-sm text-ink-3">Multa e juros zerados: nada é calculado e as mensagens só avisam que os valores estão sujeitos à atualização.</p>
   const f = fineFor(base, fine)
   const d = dailyInterestFor(base, daily)
   return (
