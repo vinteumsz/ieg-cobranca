@@ -7,6 +7,7 @@ export type OpenRule = 'sem_pagamento_ou_zerado' | 'sem_data_pagamento' | 'valor
 export type AmountBasis = 'liquido' | 'parcela'
 export type WaMode = 'template' | 'texto'
 export type EmailProvider = 'smtp' | 'resend'
+export type SendMode = 'manual' | 'automatico'
 
 export type Settings = {
   open_rule: OpenRule
@@ -20,6 +21,7 @@ export type Settings = {
   cpf_display: CpfDisplay
   store_original_pdf: boolean
   duplicate_window_days: number
+  send_mode: SendMode
   test_mode: boolean
   test_phone: string | null
   test_email: string | null
@@ -42,7 +44,7 @@ export const OPEN_RULE_LABELS: Record<OpenRule, string> = {
   sem_pagamento_ou_zerado: 'Sem data de pagamento OU valor pago zerado (padrão)',
   sem_data_pagamento: 'Somente quando não há data de pagamento',
   valor_pago_zerado: 'Somente quando o valor pago está zerado ou vazio',
-  pago_menor_que_liquido: 'Valor pago menor que o valor da parcela (inclui pagamentos parciais)',
+  pago_menor_que_liquido: 'Valor pago menor que o devido (inclui pagamentos parciais)',
 }
 
 export const DEFAULT_WA_TEXT = `Olá, {{nome_responsavel}}. Tudo bem?
@@ -125,7 +127,7 @@ export const DEFAULT_SETTINGS: Settings = {
   open_rule: 'sem_pagamento_ou_zerado',
   only_overdue: true,
   grace_days: 0,
-  amount_basis: 'liquido',
+  amount_basis: 'parcela',
   daily_interest_pct: null,
   fine_pct: null,
   interest_start_date: null,
@@ -133,6 +135,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cpf_display: 'parcial',
   store_original_pdf: false,
   duplicate_window_days: 7,
+  send_mode: 'manual',
   test_mode: true,
   test_phone: null,
   test_email: null,
@@ -164,9 +167,17 @@ export function effective(s: Settings) {
 
 export type EffectiveSettings = ReturnType<typeof effective>
 
+/**
+ * Cálculo de juros e multa. Desligado por decisão da escola: o valor do débito é o valor
+ * cheio das parcelas, e as mensagens só avisam que os valores estão sujeitos à atualização.
+ * Para religar no futuro, troque para `true` e volte a exibir a seção nas Configurações.
+ */
+export const INTEREST_ENABLED = false
+
 export function normalizeSettings(row: Partial<Settings> | null | undefined): Settings {
   const s = { ...DEFAULT_SETTINGS, ...(row ?? {}) } as Settings
-  s.daily_interest_pct = s.daily_interest_pct === null || s.daily_interest_pct === undefined ? null : Number(s.daily_interest_pct)
-  s.fine_pct = s.fine_pct === null || s.fine_pct === undefined ? null : Number(s.fine_pct)
+  s.daily_interest_pct = !INTEREST_ENABLED || s.daily_interest_pct === null || s.daily_interest_pct === undefined ? null : Number(s.daily_interest_pct)
+  s.fine_pct = !INTEREST_ENABLED || s.fine_pct === null || s.fine_pct === undefined ? null : Number(s.fine_pct)
+  if (!INTEREST_ENABLED) s.interest_start_date = null
   return s
 }

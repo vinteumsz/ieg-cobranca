@@ -1,6 +1,6 @@
 'use client'
 
-import { Copy, FlaskConical, KeyRound, Mail, MessageCircle, Percent, Plus, ScrollText, Send, ShieldCheck, Trash2, Undo2 } from 'lucide-react'
+import { ChevronDown, Copy, FlaskConical, KeyRound, Mail, MessageCircle, MousePointerClick, Plus, ScrollText, Send, ShieldCheck, Trash2, Undo2, Zap } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useToast } from '@/components/toast'
@@ -25,15 +25,13 @@ type Props = {
 }
 
 const SECTIONS = [
-  ['juros', 'Atualização da dívida'],
+  ['envio', 'Forma de envio'],
   ['regras', 'Leitura e cobrança'],
   ['mensagens', 'Mensagens e CPF'],
   ['whatsapp', 'WhatsApp'],
   ['email', 'E-mail'],
   ['testes', 'Testes e segurança'],
 ] as const
-
-const pct = (n: number | null) => (n === null || n === undefined ? '' : String(n).replace('.', ','))
 
 export function SettingsView(props: Props) {
   const { initial, defaults } = props
@@ -42,10 +40,7 @@ export function SettingsView(props: Props) {
   const [s, setS] = useState<Settings>(initial)
   const [saving, setSaving] = useState<string | null>(null)
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((x) => ({ ...x, [k]: v }))
-
-  // Campos de texto dos percentuais (aceitam vírgula)
-  const [daily, setDaily] = useState(pct(initial.daily_interest_pct))
-  const [fine, setFine] = useState(pct(initial.fine_pct))
+  const manual = initial.send_mode === 'manual'
 
   // Modelos com padrão aplicado para edição
   const [waText, setWaText] = useState(initial.wa_text_template ?? defaults.waText)
@@ -57,8 +52,12 @@ export function SettingsView(props: Props) {
   async function save(section: string, body: Record<string, unknown>) {
     setSaving(section)
     try {
-      await apiFetch('/api/settings', { method: 'PUT', json: body })
-      toast('Configurações salvas.')
+      const r = await apiFetch<{ recalculadas?: number | null }>('/api/settings', { method: 'PUT', json: body })
+      toast(
+        typeof r.recalculadas === 'number'
+          ? `Configurações salvas. ${r.recalculadas === 1 ? '1 cobrança teve o valor recalculado' : `${r.recalculadas} cobranças tiveram o valor recalculado`}.`
+          : 'Configurações salvas.',
+      )
       router.refresh()
     } catch (e) {
       toast((e as Error).message, 'bad')
@@ -72,16 +71,17 @@ export function SettingsView(props: Props) {
       receita: 'MENSALIDADE', parcela: '', vencimento: venc, mes: monthLabel(venc), valorParcelaCents: cents, descontoCents: 0,
       valorLiquidoCents: cents, dataPagamento: null, valorPagoCents: 0, emAbertoCents: cents, situacao: 'vencida', cobrar: true, avisos: [],
     })
-    const installments = [inst('2026-04-15', 54300), inst('2026-05-15', 54300), inst('2026-06-15', 54300)]
+    const installments = [inst('2026-04-15', 60300), inst('2026-05-15', 60300), inst('2026-06-15', 60300)]
     const cs: ComposeSettings = {
       today: props.today,
       cpf_display: s.cpf_display,
       show_updated_values: s.show_updated_values,
       email_team_name: s.email_team_name,
-      daily_interest_pct: daily ? Number(daily.replace(',', '.')) || null : null,
-      fine_pct: fine ? Number(fine.replace(',', '.')) || null : null,
-      interest_start_date: s.interest_start_date,
-      wa_mode: s.wa_mode,
+      // Juros desativados por enquanto: o valor cobrado é o valor cheio das parcelas
+      daily_interest_pct: null,
+      fine_pct: null,
+      interest_start_date: null,
+      wa_mode: s.send_mode === 'manual' ? 'texto' : s.wa_mode,
       wa_template_name: s.wa_template_name,
       wa_template_language: s.wa_template_language,
       waText,
@@ -93,17 +93,17 @@ export function SettingsView(props: Props) {
     return composeMessages(
       {
         guardian_name: 'Maria da Silva (exemplo)', guardian_cpf: '52998224725', student_name: 'Pedro da Silva', class_name: '6º ANO A',
-        installments, total_open_cents: 162900, wa_text_override: null, wa_params_override: null, email_subject_override: null, email_body_override: null,
+        installments, total_open_cents: 180900, wa_text_override: null, wa_params_override: null, email_subject_override: null, email_body_override: null,
       },
       cs,
     )
-  }, [s, daily, fine, waText, waBody, waParams, emSubject, emBody, props.today])
+  }, [s, waText, waBody, waParams, emSubject, emBody, props.today])
 
   return (
     <div className="grid gap-8 lg:grid-cols-[200px_minmax(0,1fr)]">
       <nav className="hidden lg:block" aria-label="Seções">
         <ul className="sticky top-6 space-y-0.5 text-sm">
-          {SECTIONS.map(([id, label]) => (
+          {SECTIONS.filter(([id]) => !manual || (id !== 'whatsapp' && id !== 'email')).map(([id, label]) => (
             <li key={id}>
               <a href={`#${id}`} className="block rounded-md px-3 py-1.5 text-ink-2 hover:bg-black/5 hover:text-ink">
                 {label}
@@ -114,25 +114,27 @@ export function SettingsView(props: Props) {
       </nav>
 
       <div className="min-w-0 space-y-6">
-        {/* ── Juros ── */}
-        <Section id="juros" icon={<Percent className="size-4" />} title="Regras de atualização da dívida" description="Se a escola ainda não definiu as taxas, deixe em branco: nada será calculado e as mensagens dirão apenas que os valores estão sujeitos à atualização.">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Juros diário (%)" htmlFor="daily" hint="Percentual por dia. Taxa mensal ÷ 30.">
-              <Input id="daily" inputMode="decimal" value={daily} onChange={(e) => setDaily(e.target.value)} placeholder="Não informado" />
-            </Field>
-            <Field label="Multa (%)" htmlFor="fine" hint="Contratos de consumo: o CDC limita a multa por atraso a 2%.">
-              <Input id="fine" inputMode="decimal" value={fine} onChange={(e) => setFine(e.target.value)} placeholder="Não informado" />
-            </Field>
-            <Field label="Data inicial para cobrança dos juros" htmlFor="istart" hint="Opcional. Antes dela, não há juros nem multa.">
-              <Input id="istart" type="date" value={s.interest_start_date ?? ''} onChange={(e) => set('interest_start_date', e.target.value || null)} />
-            </Field>
+        {/* ── Forma de envio ── */}
+        <Section id="envio" icon={<Send className="size-4" />} title="Forma de envio" description="Como as cobranças saem depois da conferência.">
+          <div className="grid gap-3 md:grid-cols-2">
+            {([
+              ['manual', <MousePointerClick key="m" className="size-5" />, 'Manual (recomendado)', 'O sistema abre o WhatsApp ou o e-mail da escola com o contato e a mensagem prontos. O funcionário confere, envia e confirma para registrar no histórico. Não precisa de API, token nem servidor de e-mail.'],
+              ['automatico', <Zap key="a" className="size-5" />, 'Automático pela API', 'Envia sozinho depois da confirmação, pela API oficial do WhatsApp (Meta) e por SMTP/Resend. Exige modelo aprovado na Meta e credenciais.'],
+            ] as const).map(([v, icon, title, desc]) => (
+              <label key={v} className={cx('flex cursor-pointer gap-3 rounded-xl border p-4', s.send_mode === v ? 'border-brand-strong bg-brand-soft' : 'border-line-strong bg-surface hover:border-ink-3')}>
+                <input type="radio" name="send_mode" className="mt-1" checked={s.send_mode === v} onChange={() => set('send_mode', v)} />
+                <span>
+                  <span className="flex items-center gap-2 font-medium"><span className="text-brand-strong">{icon}</span>{title}</span>
+                  <span className="mt-1 block text-sm text-ink-2">{desc}</span>
+                </span>
+              </label>
+            ))}
           </div>
-          <Check checked={s.show_updated_values} onChange={(v) => set('show_updated_values', v)} label="Mostrar valor original, juros acumulados e valor atualizado nas mensagens (quando houver taxa)" />
-          <SaveRow loading={saving === 'juros'} onClick={() => save('juros', { daily_interest_pct: daily.trim() || null, fine_pct: fine.trim() || null, interest_start_date: s.interest_start_date, show_updated_values: s.show_updated_values })} />
+          <SaveRow loading={saving === 'envio'} onClick={() => save('envio', { send_mode: s.send_mode })} />
         </Section>
 
         {/* ── Regras ── */}
-        <Section id="regras" icon={<ScrollText className="size-4" />} title="Leitura e cobrança" description="Valem para as próximas importações. Importações já feitas mantêm as regras da época.">
+        <Section id="regras" icon={<ScrollText className="size-4" />} title="Leitura e cobrança" description="Valem para as próximas importações. Ao mudar o valor cobrado, as importações já feitas também são recalculadas.">
           <Field label="Considerar parcela em aberto quando" htmlFor="rule">
             <Select id="rule" value={s.open_rule} onChange={(e) => set('open_rule', e.target.value as OpenRule)}>
               {Object.entries(OPEN_RULE_LABELS).map(([k, l]) => (
@@ -141,10 +143,10 @@ export function SettingsView(props: Props) {
             </Select>
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Valor cobrado de cada parcela" htmlFor="basis">
+            <Field label="Valor cobrado de cada parcela" htmlFor="basis" hint="Sem juros. Ao salvar, as cobranças já importadas são recalculadas.">
               <Select id="basis" value={s.amount_basis} onChange={(e) => set('amount_basis', e.target.value as Settings['amount_basis'])}>
+                <option value="parcela">Valor cheio da parcela (padrão da escola)</option>
                 <option value="liquido">Valor líquido (com desconto)</option>
-                <option value="parcela">Valor da parcela (sem desconto)</option>
               </Select>
             </Field>
             <Field label="Tolerância após o vencimento (dias)" htmlFor="grace">
@@ -169,11 +171,17 @@ export function SettingsView(props: Props) {
             </div>
           </fieldset>
 
+          <div className="max-w-sm">
+            <Field label="Nome da equipe (assinatura)" htmlFor="team-sig" hint="Usado em {{nome_equipe}}.">
+              <Input id="team-sig" value={s.email_team_name} onChange={(e) => set('email_team_name', e.target.value)} />
+            </Field>
+          </div>
+
           <VariableChips variables={props.variables} />
 
           <div className="grid gap-5 xl:grid-cols-2">
             <div className="space-y-4">
-              <Field label="WhatsApp — texto livre" htmlFor="watext" hint="Usado quando o WhatsApp está no modo “texto livre”. No modo “modelo aprovado”, vale o texto cadastrado na Meta (seção WhatsApp).">
+              <Field label="WhatsApp" htmlFor="watext" hint="Texto aberto no WhatsApp no envio manual (e no automático em modo “texto livre”). No automático com modelo aprovado, vale o texto cadastrado na Meta.">
                 <Textarea id="watext" rows={12} value={waText} onChange={(e) => setWaText(e.target.value)} />
               </Field>
               <Field label="E-mail — assunto" htmlFor="emsubj">
@@ -197,7 +205,7 @@ export function SettingsView(props: Props) {
           </div>
           <SaveRow
             loading={saving === 'mensagens'}
-            onClick={() => save('mensagens', { cpf_display: s.cpf_display, wa_text_template: waText, email_subject_template: emSubject, email_body_template: emBody })}
+            onClick={() => save('mensagens', { cpf_display: s.cpf_display, email_team_name: s.email_team_name, wa_text_template: waText, email_subject_template: emSubject, email_body_template: emBody })}
             extra={
               <Button variant="ghost" icon={<Undo2 className="size-4" />} onClick={() => {
                 setWaText(defaults.waText)
@@ -210,6 +218,7 @@ export function SettingsView(props: Props) {
           />
         </Section>
 
+        <ApiSections manual={manual}>
         {/* ── WhatsApp ── */}
         <Section id="whatsapp" icon={<MessageCircle className="size-4" />} title="WhatsApp (Meta WhatsApp Cloud API)" description="Integração oficial. Não usamos WhatsApp Web nem automação de navegador.">
           <Notice tone="accent" title="Mensagens de cobrança precisam de modelo aprovado">
@@ -290,18 +299,18 @@ export function SettingsView(props: Props) {
             <Field label="Nome do remetente" htmlFor="sender">
               <Input id="sender" value={s.email_sender_name} onChange={(e) => set('email_sender_name', e.target.value)} />
             </Field>
-            <Field label="Nome da equipe" htmlFor="team" hint="Usado na assinatura ({{nome_equipe}}).">
-              <Input id="team" value={s.email_team_name} onChange={(e) => set('email_team_name', e.target.value)} />
-            </Field>
           </div>
-          <SaveRow loading={saving === 'email'} onClick={() => save('email', { email_provider: s.email_provider, email_reply_to: s.email_reply_to, email_sender_name: s.email_sender_name, email_team_name: s.email_team_name })} />
+          <SaveRow loading={saving === 'email'} onClick={() => save('email', { email_provider: s.email_provider, email_reply_to: s.email_reply_to, email_sender_name: s.email_sender_name })} />
           <SecretsForm group="email" {...props} provider={s.email_provider} />
           <TestSend channel="email" />
         </Section>
 
+        </ApiSections>
+
         {/* ── Testes ── */}
         <Section id="testes" icon={<ShieldCheck className="size-4" />} title="Testes e segurança">
-          <div className={cx('rounded-xl border p-4', s.test_mode ? 'border-brand-line bg-brand-soft' : 'border-line bg-surface')}>
+          {manual && <p className="text-sm text-ink-3">O modo de testes só vale para o envio automático. No envio manual, quem envia é sempre o funcionário.</p>}
+          <div className={cx('rounded-xl border p-4', s.test_mode && !manual ? 'border-brand-line bg-brand-soft' : 'border-line bg-surface', manual && 'opacity-60')}>
             <Check
               checked={s.test_mode}
               onChange={(v) => set('test_mode', v)}
@@ -337,6 +346,22 @@ export function SettingsView(props: Props) {
         </Section>
       </div>
     </div>
+  )
+}
+
+function ApiSections({ manual, children }: { manual: boolean; children: ReactNode }) {
+  if (!manual) return <>{children}</>
+  return (
+    <details className="group rounded-xl border border-line bg-surface">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
+        <span>
+          <span className="block text-[15px] font-semibold">Envio automático pela API (opcional)</span>
+          <span className="mt-0.5 block text-sm text-ink-3">WhatsApp Cloud API e servidor de e-mail. Não são usados no envio manual.</span>
+        </span>
+        <ChevronDown className="size-5 shrink-0 text-ink-3 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="space-y-6 border-t border-line p-4">{children}</div>
+    </details>
   )
 }
 

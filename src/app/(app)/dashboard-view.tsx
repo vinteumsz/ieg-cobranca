@@ -108,7 +108,7 @@ export function DashboardView({
                   Com multa e juros até hoje: <strong className="text-ink">{formatCents(updated)}</strong>
                 </p>
               ) : (
-                <p className="mt-2 text-sm text-ink-3">Sem taxas de juros configuradas — valores sujeitos à atualização.</p>
+                <p className="mt-2 text-sm text-ink-3">Valor cheio das parcelas vencidas, sem juros.</p>
               )}
             </div>
             <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line">

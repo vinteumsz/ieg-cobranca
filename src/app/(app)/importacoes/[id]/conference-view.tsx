@@ -12,6 +12,7 @@ import { formatCents, formatCpf, formatDateTime, formatPhone, monthShortLabel, n
 import type { ChargeRow, ImportRow } from '@/lib/types'
 import { ChannelBadge, StatusBadge } from './badges'
 import { ChargeDrawer } from './charge-drawer'
+import { ManualQueue } from './manual'
 import { SendDialog, type Channel } from './send-dialog'
 
 type Filter = 'todos' | 'pendentes' | 'selecionados' | 'enviados' | 'erro' | 'alerta' | 'cancelados'
@@ -35,6 +36,7 @@ type Props = {
   testMode: boolean
   isAdmin: boolean
   windowDays: number
+  sendMode: 'manual' | 'automatico'
 }
 
 const needsReview = (c: ChargeRow) => hasCritical(c.warnings) && !c.reviewed
@@ -55,11 +57,18 @@ function monthsSummary(c: ChargeRow) {
   return ms.length === 2 ? `${first}, ${last}` : `${first}, ${monthShortLabel(ms[1])} +${ms.length - 2}`
 }
 
-export function ConferenceView({ importRow, initialCharges, recent, compose, interestConfigured, testMode, isAdmin, windowDays }: Props) {
+export function ConferenceView({ importRow, initialCharges, recent: initialRecent, compose, interestConfigured, isAdmin, sendMode }: Props) {
   const router = useRouter()
   const toast = useToast()
   const [charges, setCharges] = useState(initialCharges)
   useEffect(() => setCharges(initialCharges), [initialCharges])
+  const [recent, setRecent] = useState(initialRecent)
+  useEffect(() => setRecent(initialRecent), [initialRecent])
+  const onRegistered = (u: ChargeRow, sentAt: string) => {
+    if (!u) return
+    setCharges((cs) => cs.map((c) => (c.id === u.id ? u : c)))
+    setRecent((r) => ({ ...r, [u.group_key]: sentAt }))
+  }
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('todos')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -67,6 +76,9 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
   const [sending, setSending] = useState<{ ids: string[]; channels: Channel[] } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deleteIds, setDeleteIds] = useState<string[] | null>(null)
+  const [deleteHistory, setDeleteHistory] = useState(false)
+  const [deletingCharges, setDeletingCharges] = useState(false)
 
   const matches = useMemo(() => {
     const q = nameKey(query)
@@ -94,10 +106,12 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
 
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.key, charges.filter((c) => byFilter[f.key](c)).length])) as Record<Filter, number>, [charges, byFilter])
   const visible = useMemo(() => charges.filter((c) => byFilter[filter](c) && matches(c)), [charges, filter, matches, byFilter])
-  const selectable = visible.filter((c) => c.status !== 'cancelado')
+  const selectable = visible
   const allVisibleSelected = selectable.length > 0 && selectable.every((c) => selected.has(c.id))
   const selectedCharges = charges.filter((c) => selected.has(c.id))
   const totalSelected = selectedCharges.reduce((s, c) => s + c.total_open_cents, 0)
+  // Canceladas podem ser selecionadas para apagar, mas não entram no envio
+  const sendableIds = selectedCharges.filter((c) => c.status !== 'cancelado').map((c) => c.id)
   const totalOpen = charges.filter((c) => c.status !== 'cancelado').reduce((s, c) => s + c.total_open_cents, 0)
   const open = charges.find((c) => c.id === openId) ?? null
 
@@ -131,10 +145,33 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
     }
   }
 
+  async function deleteCharges() {
+    if (!deleteIds) return
+    setDeletingCharges(true)
+    try {
+      const r = await apiFetch<{ deleted: string[]; envios: number }>('/api/charges', { method: 'DELETE', json: { ids: deleteIds, envios: deleteHistory } })
+      const gone = new Set(r.deleted)
+      setCharges((cs) => cs.filter((c) => !gone.has(c.id)))
+      setSelected((sel) => new Set([...sel].filter((id) => !gone.has(id))))
+      if (openId && gone.has(openId)) setOpenId(null)
+      toast(r.deleted.length === 1 ? 'Cobrança apagada.' : `${r.deleted.length} cobranças apagadas.`)
+      setDeleteIds(null)
+      setDeleteHistory(false)
+      router.refresh()
+    } catch (e) {
+      toast((e as Error).message, 'bad')
+    } finally {
+      setDeletingCharges(false)
+    }
+  }
+
+  const deleteTargets = deleteIds ? charges.filter((c) => deleteIds.includes(c.id)) : []
+  const deleteTargetsSent = deleteTargets.filter((c) => c.last_sent_at || c.status === 'enviado' || c.status === 'entregue').length
+
   const imported = formatDateTime(importRow.created_at)
 
   return (
-    <div className={cx(selected.size > 0 && 'pb-28')}>
+    <div className={cx(selected.size > 0 && 'pb-40 sm:pb-28')}>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <Link href="/importacoes" className="text-sm text-ink-3 hover:text-ink">← Importações</Link>
@@ -181,7 +218,7 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
       )}
       {!interestConfigured && (
         <p className="mb-4 text-sm text-ink-3">
-          Taxas de juros e multa não informadas: as mensagens avisam que “os valores estão sujeitos à atualização”, sem calcular encargos.
+          Valores pelo valor cheio das parcelas, sem juros. As mensagens avisam que “os valores estão sujeitos à atualização”.
         </p>
       )}
 
@@ -262,7 +299,6 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
                           type="checkbox"
                           checked={selected.has(c.id)}
                           onChange={() => toggle(c.id)}
-                          disabled={c.status === 'cancelado'}
                           className="mt-0.5 size-4"
                           aria-label={`Selecionar ${c.guardian_name}`}
                         />
@@ -319,7 +355,6 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
                       type="checkbox"
                       checked={selected.has(c.id)}
                       onChange={() => toggle(c.id)}
-                      disabled={c.status === 'cancelado'}
                       className="mt-1 size-5 shrink-0"
                       aria-label={`Selecionar ${c.guardian_name}`}
                     />
@@ -363,15 +398,21 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
                 Limpar
               </button>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" icon={<MessageCircle className="size-4" />} onClick={() => setSending({ ids: [...selected], channels: ['whatsapp'] })}>
-                Enviar WhatsApp selecionados
+            <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+              <Button variant="danger-ghost" icon={<Trash2 className="size-4" />} onClick={() => setDeleteIds([...selected])}>
+                Apagar
               </Button>
-              <Button variant="secondary" icon={<Mail className="size-4" />} onClick={() => setSending({ ids: [...selected], channels: ['email'] })}>
-                Enviar e-mail selecionados
+              <Button variant="secondary" disabled={sendableIds.length === 0} icon={<MessageCircle className="size-4" />} onClick={() => setSending({ ids: sendableIds, channels: ['whatsapp'] })}>
+                <span className="sm:hidden">WhatsApp</span>
+                <span className="hidden sm:inline">{sendMode === 'manual' ? 'WhatsApp dos selecionados' : 'Enviar WhatsApp selecionados'}</span>
               </Button>
-              <Button variant="brand" icon={<Send className="size-4" />} onClick={() => setSending({ ids: [...selected], channels: ['whatsapp', 'email'] })}>
-                Enviar WhatsApp + e-mail
+              <Button variant="secondary" disabled={sendableIds.length === 0} icon={<Mail className="size-4" />} onClick={() => setSending({ ids: sendableIds, channels: ['email'] })}>
+                <span className="sm:hidden">E-mail</span>
+                <span className="hidden sm:inline">{sendMode === 'manual' ? 'E-mail dos selecionados' : 'Enviar e-mail selecionados'}</span>
+              </Button>
+              <Button variant="brand" disabled={sendableIds.length === 0} icon={<Send className="size-4" />} onClick={() => setSending({ ids: sendableIds, channels: ['whatsapp', 'email'] })}>
+                <span className="sm:hidden">Os dois</span>
+                <span className="hidden sm:inline">{sendMode === 'manual' ? 'WhatsApp + e-mail' : 'Enviar WhatsApp + e-mail'}</span>
               </Button>
             </div>
           </div>
@@ -385,12 +426,30 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
           compose={compose}
           recentAt={recent[open.group_key] ?? null}
           onClose={() => setOpenId(null)}
+          sendMode={sendMode}
           onUpdated={(u) => setCharges((cs) => cs.map((c) => (c.id === u.id ? u : c)))}
+          onRegistered={onRegistered}
           onSend={(channels) => setSending({ ids: [open.id], channels })}
+          onDelete={() => setDeleteIds([open.id])}
         />
       )}
 
-      {sending && (
+      {sending && sendMode === 'manual' && (
+        <ManualQueue
+          charges={charges.filter((c) => sending.ids.includes(c.id))}
+          channels={sending.channels}
+          compose={compose}
+          recent={recent}
+          onRegistered={onRegistered}
+          onClose={() => {
+            setSending(null)
+            setSelected(new Set())
+            router.refresh()
+          }}
+        />
+      )}
+
+      {sending && sendMode === 'automatico' && (
         <SendDialog
           ids={sending.ids}
           channels={sending.channels}
@@ -402,6 +461,47 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
           }}
         />
       )}
+
+      <Modal
+        open={!!deleteIds}
+        onClose={() => {
+          if (deletingCharges) return
+          setDeleteIds(null)
+          setDeleteHistory(false)
+        }}
+        title={deleteTargets.length === 1 ? 'Apagar esta cobrança?' : `Apagar ${deleteTargets.length} cobranças?`}
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" disabled={deletingCharges} onClick={() => { setDeleteIds(null); setDeleteHistory(false) }}>Voltar</Button>
+            <Button variant="danger" icon={<Trash2 className="size-4" />} loading={deletingCharges} onClick={deleteCharges}>Apagar</Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm text-ink-2">
+          {deleteTargets.length === 1 ? (
+            <p>
+              A cobrança de <strong className="text-ink">{deleteTargets[0].guardian_name || 'responsável não identificado'}</strong> (aluno(a) {deleteTargets[0].student_name}, {formatCents(deleteTargets[0].total_open_cents)}) sai desta conferência e do painel.
+            </p>
+          ) : (
+            <p>
+              As cobranças selecionadas ({formatCents(deleteTargets.reduce((s, c) => s + c.total_open_cents, 0))}) saem desta conferência e do painel.
+            </p>
+          )}
+          <p>Isso não pode ser desfeito. Para cobrar de novo, importe o relatório outra vez.</p>
+          {isAdmin ? (
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line bg-subtle px-3 py-2.5">
+              <input type="checkbox" className="mt-0.5 size-4" checked={deleteHistory} onChange={(e) => setDeleteHistory(e.target.checked)} />
+              <span>
+                Apagar também o histórico de envios {deleteTargets.length === 1 ? 'desta cobrança' : 'dessas cobranças'}
+                {deleteTargetsSent > 0 && <span className="text-ink-3"> ({deleteTargetsSent} já {deleteTargetsSent === 1 ? 'foi enviada' : 'foram enviadas'})</span>}
+              </span>
+            </label>
+          ) : (
+            deleteTargetsSent > 0 && <p className="text-ink-3">O histórico das mensagens já enviadas é mantido.</p>
+          )}
+        </div>
+      </Modal>
 
       <Modal
         open={confirmDelete}
@@ -416,7 +516,7 @@ export function ConferenceView({ importRow, initialCharges, recent, compose, int
         }
       >
         <p className="text-sm text-ink-2">
-          As {charges.length} cobranças desta conferência{importRow.storage_path ? ' e o PDF arquivado' : ''} serão apagadas. O histórico de mensagens já enviadas é mantido para auditoria.
+          As {charges.length} cobranças desta conferência{importRow.storage_path ? ' e o PDF arquivado' : ''} serão apagadas. O histórico de mensagens já enviadas é mantido (pode ser apagado em Histórico).
         </p>
       </Modal>
     </div>

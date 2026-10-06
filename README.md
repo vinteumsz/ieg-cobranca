@@ -1,9 +1,14 @@
 # IEG Cobrança
 
-Sistema interno da equipe financeira do **IEG Colégio e Curso** para transformar o relatório financeiro (PDF) em cobranças conferidas e enviadas por **WhatsApp** (API oficial da Meta) e **e-mail**.
+Sistema interno da equipe financeira do **IEG Colégio e Curso** para transformar o relatório financeiro (PDF) em cobranças conferidas e enviadas por **WhatsApp** e **e-mail**.
 
 Fluxo: **Login → Importar PDF → Leitura automática → Conferência → Seleção → Prévia → Confirmação → Envio → Histórico.**
-Nada é enviado na importação. Todo envio passa por uma janela de confirmação.
+Nada é enviado na importação.
+
+**Duas formas de envio** (Configurações → Forma de envio):
+
+- **Manual (padrão):** o sistema abre o WhatsApp (Web ou aplicativo) ou o e-mail (programa padrão, Gmail ou Outlook) já com o contato e a mensagem prontos. O funcionário confere, clica em enviar e confirma no sistema, que registra o envio no histórico. **Não precisa de API, token nem servidor de e-mail.**
+- **Automático (opcional):** envio pela API oficial do WhatsApp (Meta) e por SMTP/Resend, com janela de confirmação e envio em lotes.
 
 ---
 
@@ -16,7 +21,7 @@ Nada é enviado na importação. Todo envio passa por uma janela de confirmaçã
 5. [Configurar o e-mail](#5-configurar-o-e-mail)
 6. [Primeiro uso recomendado](#6-primeiro-uso-recomendado)
 7. [Como a leitura do PDF funciona](#7-como-a-leitura-do-pdf-funciona)
-8. [Regras de cobrança e juros](#8-regras-de-cobrança-e-juros)
+8. [Regras de cobrança](#8-regras-de-cobrança)
 9. [Segurança e LGPD](#9-segurança-e-lgpd)
 10. [Desenvolvimento e testes](#10-desenvolvimento-e-testes)
 11. [Estrutura do projeto](#11-estrutura-do-projeto)
@@ -31,13 +36,14 @@ Nada é enviado na importação. Todo envio passa por uma janela de confirmaçã
 | **Importar relatório** | Arrastar ou selecionar o PDF, ver nome, tamanho e data. “Processar relatório” lê o arquivo **no navegador** e mostra quantos responsáveis e cobranças foram encontrados. OCR automático se o PDF for escaneado. Avisa se o mesmo arquivo já foi importado. |
 | **Leitura do PDF** | Identifica aluno, responsável, CPF, e-mail, celular, turma e a tabela de parcelas (C. Receita, Parcela, Vencimento, Valor, Desconto, Líquido, Data de pagamento, Valor pago). Tolera variações de layout e gera **alertas** quando algo parece estranho. |
 | **Agrupamento** | Uma cobrança por **responsável + aluno**, com as parcelas listadas por mês (`15/04/2026 → Abril/2026`) e o total. |
-| **Conferência** | Tabela com busca (responsável, aluno, CPF, turma) e filtros (Todos, Pendentes, Selecionados, Mensagem enviada, Erro no envio, Com alerta, Cancelados). No celular vira lista de cartões. |
-| **Detalhes** | Dados do responsável, mensalidades em aberto, total, juros (se configurados), prévia do WhatsApp e do e-mail com **edição**, correção de contato, cancelamento da cobrança. |
-| **Envio em massa** | Seleção por caixas, janela “Você está prestes a enviar N mensagens de cobrança” com WhatsApps, e-mails e responsáveis sem e-mail; envio em lotes com barra de progresso. |
-| **Proteções** | Aviso de cobrança recente (“Este responsável recebeu uma cobrança em DD/MM/AAAA. Deseja enviar novamente?”), bloqueio de cobranças com alerta até alguém conferir, trava contra clique duplo e contra dois funcionários enviando ao mesmo tempo, **modo de testes** ligado por padrão. |
-| **Histórico** | Data, horário, responsável, aluno, valor, canal, WhatsApp, e-mail, status (Enviado, Entregue, Erro, Pendente, Cancelado, Teste) e funcionário. Clique para ver o texto exato enviado. |
+| **Conferência** | Tabela com busca (responsável, aluno, CPF, turma) e filtros (Todos, Pendentes, Selecionados, Mensagem enviada, Erro no envio, Com alerta, Cancelados). Selecione várias cobranças para enviar ou **apagar**. No celular vira lista de cartões. |
+| **Detalhes** | Dados do responsável, mensalidades em aberto, total, prévia do WhatsApp e do e-mail com **edição**, correção de contato, cancelamento e **exclusão** da cobrança. |
+| **Envio manual** | No detalhe: “Abrir no WhatsApp” / “Abrir e-mail” com a mensagem pronta, botão “Copiar” e confirmação “Sim, registrar envio”. Para vários selecionados: janela “Você está prestes a enviar N mensagens de cobrança” e uma **fila**, um responsável por vez (abrir → enviar → registrar e ir para o próximo, ou pular). O WhatsApp Web abre sempre na mesma aba. |
+| **Envio automático** | (Opcional) Mesma janela de confirmação, envio em lotes com barra de progresso pela API. |
+| **Proteções** | Aviso de cobrança recente (“Este responsável recebeu uma cobrança em DD/MM/AAAA. Deseja enviar novamente?”), bloqueio de cobranças com alerta até alguém conferir, trava contra clique duplo e contra dois funcionários enviando ao mesmo tempo, **modo de testes** (envio automático) ligado por padrão. |
+| **Histórico** | Data, horário, responsável, aluno, valor, canal, WhatsApp, e-mail, status (Enviado, Entregue, Erro, Pendente, Cancelado, Teste) e funcionário. Clique para ver o texto exato enviado. Administradores podem **apagar** envios (um ou vários); a cobrança volta a ficar pendente se não restar outro envio. |
 | **Painel** | Total em aberto, responsáveis inadimplentes, alunos, mensalidades vencidas, mensagens enviadas hoje, cobranças por WhatsApp e por e-mail, e gráficos: inadimplência por mês, parcelas vencidas por tempo de atraso e valor em aberto por turma. |
-| **Configurações** | Regras de atualização da dívida (juros diário, multa, data inicial), regra de parcela em aberto, exibição do CPF, textos das mensagens com prévia, WhatsApp, e-mail, modo de testes e arquivamento do PDF. |
+| **Configurações** | Forma de envio, regra de parcela em aberto, valor cobrado (valor cheio, padrão), exibição do CPF, textos das mensagens com prévia, integrações do envio automático, modo de testes e arquivamento do PDF. |
 | **Usuários e logs** | Criar, desativar e redefinir senha; logs de acesso e de todas as ações sensíveis. |
 
 ---
@@ -48,8 +54,8 @@ Nada é enviado na importação. Todo envio passa por uma janela de confirmaçã
 - **Tailwind CSS 4**, ícones **Lucide**, fontes Sora e Inter (auto-hospedadas)
 - **Supabase**: PostgreSQL, Auth e Storage (bucket privado opcional)
 - **unpdf** (pdf.js) para ler o PDF e **tesseract.js** como OCR de reserva
-- **Meta WhatsApp Cloud API** (sem WhatsApp Web / automação de navegador)
-- **SMTP** (Nodemailer — serve para Gmail/Google Workspace com senha de app) ou **Resend**
+- Envio manual: links oficiais do WhatsApp (`wa.me` / WhatsApp Web / aplicativo) e de e-mail (`mailto:`, Gmail, Outlook) — quem envia é o funcionário
+- Envio automático (opcional): **Meta WhatsApp Cloud API** e **SMTP** (Nodemailer) ou **Resend**
 - **Vitest** para os testes
 
 ---
@@ -74,9 +80,9 @@ Copie `.env.example` para `.env.local` e preencha:
 | `NEXT_PUBLIC_SUPABASE_URL` | sim | URL do projeto |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | sim | chave pública (anon) |
 | `SUPABASE_SECRET_KEY` | sim | chave secreta — só no servidor |
-| `APP_ENCRYPTION_KEY` | sim* | criptografa os tokens salvos pela tela. Gere com `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `APP_ENCRYPTION_KEY` | só no envio automático* | criptografa os tokens salvos pela tela. Gere com `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
 | `APP_URL` | recomendado | endereço público (ex.: `https://cobranca.iegcolegioecurso.com.br`) |
-| `WHATSAPP_*`, `SMTP_*`, `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS` | não | alternativa a configurar pela tela |
+| `WHATSAPP_*`, `SMTP_*`, `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS` | não | só para o envio automático |
 
 \* Sem ela, as credenciais só podem ser definidas como variáveis de ambiente.
 
@@ -100,9 +106,20 @@ npm run create-admin -- financeiro@iegcolegioecurso.com.br "Nome Completo" "UmaS
 
 Rodar localmente: `npm run dev` e abrir `http://localhost:3000`.
 
+### 3.5 Deixar o acesso privado
+
+O sistema já exige login, não tem cadastro aberto (contas criadas por fora nascem desativadas), não é indexado pelo Google e registra todos os acessos. Para uma segunda tranca antes da tela de login, escolha uma na Vercel:
+
+- **Só pessoas convidadas, de qualquer lugar:** *Settings → Deployment Protection → Vercel Authentication → All Deployments*. A página só abre para quem entrar com uma conta Vercel convidada para o projeto (no plano Pro, funcionários entram como *Viewer*, sem custo).
+- **Só dentro da escola:** no *Firewall*, uma regra que bloqueia IPs diferentes do IP fixo da escola.
+
+No envio manual não há webhook, então nenhuma exceção é necessária. Se um dia usar o webhook de entrega do envio automático, crie um *Protection Bypass for Automation* e cadastre na Meta a URL com `?x-vercel-protection-bypass=SEGREDO` (ou deixe `/api/webhooks` fora da regra de IP).
+
 ---
 
-## 4. Configurar o WhatsApp (Meta Cloud API)
+## 4. Envio automático (opcional): WhatsApp pela Meta Cloud API
+
+> No **envio manual** (padrão) não há nada a configurar aqui: basta o WhatsApp da escola estar aberto no WhatsApp Web, no aplicativo de computador ou no celular de quem envia.
 
 **Importante:** a Meta só deixa a empresa **iniciar** conversa usando **modelos (templates) aprovados**. Mensagem de texto livre só é entregue se o responsável tiver falado com a escola nas últimas 24 horas. Por isso o modo padrão é **“Modelo aprovado”**.
 
@@ -122,9 +139,11 @@ Limites da Meta: contas novas começam com um teto de destinatários por 24 hora
 
 ---
 
-## 5. Configurar o e-mail
+## 5. Envio automático (opcional): servidor de e-mail
 
-Em **Configurações → E-mail** escolha:
+> No **envio manual** o e-mail abre no programa padrão do computador, no Gmail ou no Outlook (escolha na própria tela), já com destinatário, assunto e texto. Nada a configurar.
+
+Para o envio automático, em **Configurações → E-mail** escolha:
 
 - **SMTP** — servidor, porta (587 ou 465), usuário e senha.
   *Gmail / Google Workspace:* `smtp.gmail.com`, porta 587, o e-mail como usuário e uma **senha de app** (Conta Google → Segurança → Verificação em duas etapas → Senhas de app).
@@ -136,11 +155,13 @@ Preencha também o **e-mail remetente** (precisa estar autorizado no provedor), 
 
 ## 6. Primeiro uso recomendado
 
-1. Entre como administrador e confira **Configurações**. O **modo de testes vem ligado**: nenhuma mensagem chega aos responsáveis.
-2. Em *Testes e segurança*, informe o **seu** celular e e-mail de teste. Com eles, as mensagens vão para você; sem eles, o envio é só simulado.
-3. Importe um relatório real, confira a leitura (compare alguns responsáveis com o PDF), envie algumas cobranças e veja como chegam.
-4. Quando tudo estiver certo, **desligue o modo de testes**.
-5. Defina com a direção: taxa de juros diária, multa e data inicial (deixe em branco se ainda não houver decisão — o sistema **não inventa** percentuais) e se a cobrança considera o valor **com** ou **sem** desconto.
+1. Entre como administrador e confira **Configurações**. A forma de envio vem como **Manual**.
+2. Abra o WhatsApp da escola no WhatsApp Web (ou no aplicativo) no computador de quem vai enviar.
+3. Importe um relatório real e confira a leitura (compare alguns responsáveis com o PDF).
+4. Faça um primeiro envio para você mesmo: use “Corrigir contato” numa cobrança para colocar o seu número/e-mail, abra, envie e veja como a mensagem chega. Depois cancele essa cobrança.
+5. Cadastre os funcionários em **Usuários**.
+6. Se um dia usar o envio automático, o **modo de testes** (ligado por padrão) manda tudo para o seu contato de teste até ser desligado.
+7. O valor cobrado é o **valor cheio** da parcela (sem desconto e sem juros), como a escola definiu. Se isso mudar, ajuste em Configurações → Leitura e cobrança.
 
 ---
 
@@ -156,13 +177,14 @@ Preencha também o **e-mail remetente** (precisa estar autorizado no provedor), 
 
 ---
 
-## 8. Regras de cobrança e juros
+## 8. Regras de cobrança
 
-- **Parcela em aberto** (padrão): sem data de pagamento **ou** com valor pago zerado. Outras opções: só sem data de pagamento; só valor pago zerado; valor pago menor que o da parcela (inclui pagamentos parciais).
+- **Parcela em aberto** (padrão): sem data de pagamento **ou** com valor pago zerado. Outras opções: só sem data de pagamento; só valor pago zerado; valor pago menor que o devido (inclui pagamentos parciais — quem pagou o valor com desconto em dia não fica devendo a diferença).
 - **Somente vencidas** (padrão): parcelas a vencer aparecem na conferência, mas não entram no total nem na mensagem. Há tolerância em dias.
-- **Valor considerado**: líquido (com desconto, padrão) ou valor da parcela (sem desconto).
-- As regras valem para as **próximas** importações; cada importação guarda as regras usadas.
-- **Juros**: juros simples diários sobre o valor em aberto de cada parcela, contados do vencimento (ou da data inicial configurada, se for posterior), mais multa única. Sem taxa configurada, nada é calculado e as mensagens trazem apenas o aviso de que os valores estão sujeitos à atualização.
+- **Valor cobrado**: **valor cheio** da parcela (sem desconto) — é o valor do débito na escola. Opção alternativa: valor líquido (com desconto). Ao trocar essa opção, as importações já feitas são **recalculadas**.
+- As demais regras valem para as **próximas** importações; cada importação guarda as regras usadas.
+- **Juros**: **desligados** por decisão da escola. Nada é calculado; as mensagens trazem apenas o aviso de que os valores estão sujeitos à atualização. (O cálculo de juros simples diários + multa continua no código, em `src/lib/billing/interest.ts`; para religar, troque `INTEREST_ENABLED` em `src/lib/settings.ts`.)
+- **Apagar**: cobranças podem ser apagadas na conferência (uma pelo detalhe, ou várias pela seleção); envios podem ser apagados no Histórico (somente administradores). Toda exclusão fica nos logs de acesso.
 - **CPF na mensagem**: não exibir, parcial (`***.***.***-45`, padrão) ou completo.
 - **Variáveis** disponíveis nos textos: `{{nome_responsavel}}`, `{{nome_aluno}}`, `{{lista_mensalidades}}`, `{{valor_total}}`, `{{detalhe_atualizacao}}`, `{{linha_cpf}}`, `{{turma}}` e outras (lista completa na tela).
 
@@ -186,7 +208,7 @@ Preencha também o **e-mail remetente** (precisa estar autorizado no provedor), 
 
 ```bash
 npm run dev        # servidor local
-npm test           # testes (leitura de PDF, regras, juros, mensagens)
+npm test           # testes (leitura de PDF, regras, mensagens, exclusões e recálculo)
 npm run typecheck  # checagem de tipos
 npm run build      # build de produção
 

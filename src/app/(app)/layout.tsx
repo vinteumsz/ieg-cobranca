@@ -8,7 +8,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await requireUser()
   const settings = await loadSettings()
   return (
-    <AppShell user={{ name: displayUser(user), role: user.role }} testMode={settings.test_mode}>
+    <AppShell user={{ name: displayUser(user), role: user.role }} testMode={settings.test_mode && settings.send_mode === 'automatico'}>
       {children}
     </AppShell>
   )

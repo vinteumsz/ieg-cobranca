@@ -33,7 +33,8 @@ export function toComposeSettings(s: EffectiveSettings, today: string): ComposeS
     daily_interest_pct: s.daily_interest_pct,
     fine_pct: s.fine_pct,
     interest_start_date: s.interest_start_date,
-    wa_mode: s.wa_mode,
+    // No envio manual o funcionário envia pelo próprio WhatsApp: vale o texto livre, sem modelo da Meta
+    wa_mode: s.send_mode === 'manual' ? 'texto' : s.wa_mode,
     wa_template_name: s.wa_template_name,
     wa_template_language: s.wa_template_language,
     waText: s.waText,

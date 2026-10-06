@@ -10,7 +10,7 @@ export function cx(...c: unknown[]) {
 // ─── Botões ────────────────────────────────────────────────────────────────
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'primary' | 'brand' | 'secondary' | 'ghost' | 'danger'
+  variant?: 'primary' | 'brand' | 'secondary' | 'ghost' | 'danger' | 'danger-ghost'
   size?: 'sm' | 'md' | 'lg'
   loading?: boolean
   icon?: ReactNode
@@ -26,6 +26,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     secondary: 'bg-surface text-ink border border-line-strong hover:bg-subtle hover:border-ink-3 disabled:text-ink-3',
     ghost: 'text-ink-2 hover:bg-black/5 hover:text-ink disabled:text-ink-3',
     danger: 'bg-bad text-white hover:bg-[#8f1c13] disabled:bg-bad/40',
+    'danger-ghost': 'text-bad hover:bg-bad-soft disabled:text-ink-3',
   }[variant]
   const sizes = { sm: 'h-8 px-3 text-[13px] gap-1.5', md: 'h-10 px-4 text-sm gap-2', lg: 'h-12 px-5 text-[15px] gap-2' }[size]
   return (

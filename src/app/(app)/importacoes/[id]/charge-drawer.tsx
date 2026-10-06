@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, Ban, CheckCircle2, Clock, Info, Mail, MessageCircle, Pencil, RotateCcw, Send, ShieldCheck, Undo2 } from 'lucide-react'
+import { AlertTriangle, Ban, CheckCircle2, Clock, Copy, Info, Mail, MessageCircle, Pencil, RotateCcw, Send, ShieldCheck, Trash2, Undo2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { apiFetch, Badge, Button, cx, Drawer, Field, Input, Notice, Textarea } from '@/components/ui'
 import { useToast } from '@/components/toast'
@@ -9,18 +9,22 @@ import { hasCritical } from '@/lib/billing/rules'
 import { formatCents, formatCpf, formatDateBR, formatDateTime, formatPhone, isValidCpf } from '@/lib/format'
 import type { ChargeRow } from '@/lib/types'
 import { ChannelBadge, StatusBadge } from './badges'
+import { copyText, ManualDrawerActions } from './manual'
 import type { Channel } from './send-dialog'
 
 type Props = {
   charge: ChargeRow
   compose: ComposeSettings
   recentAt: string | null
+  sendMode: 'manual' | 'automatico'
   onClose: () => void
   onUpdated: (c: ChargeRow) => void
+  onRegistered: (c: ChargeRow, sentAt: string) => void
   onSend: (channels: Channel[]) => void
+  onDelete: () => void
 }
 
-export function ChargeDrawer({ charge, compose, recentAt, onClose, onUpdated, onSend }: Props) {
+export function ChargeDrawer({ charge, compose, recentAt, sendMode, onClose, onUpdated, onRegistered, onSend, onDelete }: Props) {
   const toast = useToast()
   const msgs = useMemo(() => composeMessages(charge, compose), [charge, compose])
   const charged = charge.installments.filter((i) => i.cobrar)
@@ -57,34 +61,38 @@ export function ChargeDrawer({ charge, compose, recentAt, onClose, onUpdated, on
         </span>
       }
       footer={
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="secondary"
-            icon={<MessageCircle className="size-4" />}
-            disabled={blocked || !charge.guardian_phone}
-            title={!charge.guardian_phone ? 'Sem celular' : undefined}
-            onClick={() => onSend(['whatsapp'])}
-          >
-            Enviar WhatsApp
-          </Button>
-          <Button
-            variant="secondary"
-            icon={<Mail className="size-4" />}
-            disabled={blocked || !charge.guardian_email}
-            title={!charge.guardian_email ? 'Sem e-mail' : undefined}
-            onClick={() => onSend(['email'])}
-          >
-            Enviar e-mail
-          </Button>
-          <Button
-            variant="brand"
-            icon={<Send className="size-4" />}
-            disabled={blocked || !charge.guardian_phone || !charge.guardian_email}
-            onClick={() => onSend(['whatsapp', 'email'])}
-          >
-            Enviar pelos dois canais
-          </Button>
-        </div>
+        sendMode === 'manual' ? (
+          <ManualDrawerActions charge={charge} compose={compose} recentAt={recentAt} onRegistered={onRegistered} />
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={<MessageCircle className="size-4" />}
+              disabled={blocked || !charge.guardian_phone}
+              title={!charge.guardian_phone ? 'Sem celular' : undefined}
+              onClick={() => onSend(['whatsapp'])}
+            >
+              Enviar WhatsApp
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<Mail className="size-4" />}
+              disabled={blocked || !charge.guardian_email}
+              title={!charge.guardian_email ? 'Sem e-mail' : undefined}
+              onClick={() => onSend(['email'])}
+            >
+              Enviar e-mail
+            </Button>
+            <Button
+              variant="brand"
+              icon={<Send className="size-4" />}
+              disabled={blocked || !charge.guardian_phone || !charge.guardian_email}
+              onClick={() => onSend(['whatsapp', 'email'])}
+            >
+              Enviar pelos dois canais
+            </Button>
+          </div>
+        )
       }
     >
       <div className="space-y-6">
@@ -174,7 +182,12 @@ export function ChargeDrawer({ charge, compose, recentAt, onClose, onUpdated, on
             <span className="flex items-center gap-1.5">WhatsApp: <ChannelBadge status={charge.wa_status} available={!!charge.guardian_phone} missingLabel="sem celular" /></span>
             <span className="flex items-center gap-1.5">E-mail: <ChannelBadge status={charge.email_status} available={!!charge.guardian_email} missingLabel="sem e-mail" /></span>
           </span>
-          {charge.status !== 'cancelado' && <CancelButton busy={busy === 'cancelar'} onConfirm={(reason) => patch({ action: 'cancelar', reason }, 'Cobrança cancelada.')} />}
+          <span className="flex flex-wrap items-center gap-1">
+            {charge.status !== 'cancelado' && <CancelButton busy={busy === 'cancelar'} onConfirm={(reason) => patch({ action: 'cancelar', reason }, 'Cobrança cancelada.')} />}
+            <Button size="sm" variant="danger-ghost" icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
+              Apagar cobrança
+            </Button>
+          </span>
         </section>
       </div>
     </Drawer>
@@ -287,6 +300,7 @@ function ContactSection({ charge, onSave, busy }: { charge: ChargeRow; onSave: (
 type SaveFn = (body: Record<string, unknown>, okText: string) => Promise<boolean>
 
 function WhatsAppPreview({ charge, compose, msgs, onSave, busy }: { charge: ChargeRow; compose: ComposeSettings; msgs: ReturnType<typeof composeMessages>; onSave: SaveFn; busy: boolean }) {
+  const toast = useToast()
   const wa = msgs.whatsapp
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(wa.mode === 'texto' ? wa.text : '')
@@ -298,6 +312,11 @@ function WhatsAppPreview({ charge, compose, msgs, onSave, busy }: { charge: Char
         action={
           <div className="flex items-center gap-1">
             {wa.edited && <Badge tone="brand">Editada</Badge>}
+            {!editing && (
+              <Button size="sm" variant="ghost" icon={<Copy className="size-3.5" />} onClick={() => copyText(wa.preview, toast)}>
+                Copiar
+              </Button>
+            )}
             {!editing && (
               <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} onClick={() => {
                 setText(wa.mode === 'texto' ? wa.text : '')
@@ -367,6 +386,7 @@ function WhatsAppPreview({ charge, compose, msgs, onSave, busy }: { charge: Char
 }
 
 function EmailPreview({ msgs, onSave, busy }: { msgs: ReturnType<typeof composeMessages>; onSave: SaveFn; busy: boolean }) {
+  const toast = useToast()
   const [editing, setEditing] = useState(false)
   const [subject, setSubject] = useState(msgs.email.subject)
   const [body, setBody] = useState(msgs.email.body)
@@ -376,6 +396,11 @@ function EmailPreview({ msgs, onSave, busy }: { msgs: ReturnType<typeof composeM
         action={
           <div className="flex items-center gap-1">
             {msgs.email.edited && <Badge tone="brand">Editada</Badge>}
+            {!editing && (
+              <Button size="sm" variant="ghost" icon={<Copy className="size-3.5" />} onClick={() => copyText(msgs.email.body, toast)}>
+                Copiar
+              </Button>
+            )}
             {!editing && (
               <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} onClick={() => {
                 setSubject(msgs.email.subject)

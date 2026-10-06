@@ -20,7 +20,7 @@ export default async function ImportPage() {
           openRule: OPEN_RULE_LABELS[s.open_rule],
           onlyOverdue: s.only_overdue,
           graceDays: s.grace_days,
-          basis: s.amount_basis === 'liquido' ? 'Valor líquido (com desconto)' : 'Valor da parcela (sem desconto)',
+          basis: s.amount_basis === 'liquido' ? 'Valor líquido (com desconto)' : 'Valor cheio da parcela (sem juros)',
         }}
       />
     </>

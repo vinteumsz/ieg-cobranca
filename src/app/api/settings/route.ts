@@ -3,8 +3,10 @@ import { ApiError, apiAuth, json, readJson, route } from '@/lib/api'
 import { audit } from '@/lib/audit'
 import { TEMPLATE_VARIABLES } from '@/lib/billing/messages'
 import { isValidEmail, parseBrPhone } from '@/lib/format'
+import { recalcStoredCharges } from '@/lib/billing/recalc'
 import {
-  DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DEFAULT_WA_TEMPLATE_BODY, DEFAULT_WA_TEMPLATE_PARAMS, DEFAULT_WA_TEXT, type Settings,
+  DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DEFAULT_WA_TEMPLATE_BODY, DEFAULT_WA_TEMPLATE_PARAMS, DEFAULT_WA_TEXT, normalizeSettings,
+  type AmountBasis, type OpenRule, type Settings,
 } from '@/lib/settings'
 import { createAdminClient } from '@/lib/supabase/server'
 
@@ -53,6 +55,7 @@ const VALIDATORS: { [K in keyof Settings]?: (v: unknown) => unknown } = {
   cpf_display: (v) => oneOf(v, ['nao_exibir', 'parcial', 'completo'] as const, 'Exibição do CPF'),
   store_original_pdf: bool,
   duplicate_window_days: (v) => int(v, 1, 90, 'Janela de aviso'),
+  send_mode: (v) => oneOf(v, ['manual', 'automatico'] as const, 'Forma de envio'),
   test_mode: bool,
   test_phone: (v) => {
     const s = String(v ?? '').trim()
@@ -112,8 +115,17 @@ export const PUT = route(async (req: NextRequest) => {
   if (Object.keys(update).length === 0) throw new ApiError(400, 'Nada para salvar.')
   update.updated_at = new Date().toISOString()
   update.updated_by = user.id
-  const { error } = await createAdminClient().from('settings').update(update).eq('id', 1)
+  const db = createAdminClient()
+  const before = normalizeSettings((await db.from('settings').select('*').eq('id', 1).maybeSingle()).data as Partial<Settings> | null)
+  const { error } = await db.from('settings').update(update).eq('id', 1)
   if (error) throw new Error(error.message)
   await audit(user, 'configuracoes_alteradas', { entity: 'settings', details: { campos: Object.keys(update).filter((k) => !k.startsWith('updated_')) } })
-  return json({ ok: true })
+
+  // Mudou a base do valor (valor cheio × com desconto): recalcula as cobranças já importadas
+  let recalculadas: number | null = null
+  if (update.amount_basis && update.amount_basis !== before.amount_basis) {
+    recalculadas = await recalcStoredCharges(db, update.amount_basis as AmountBasis, (update.open_rule as OpenRule | undefined) ?? before.open_rule)
+    await audit(user, 'valores_recalculados', { entity: 'settings', details: { base: update.amount_basis, cobrancas_alteradas: recalculadas } })
+  }
+  return json({ ok: true, recalculadas })
 })

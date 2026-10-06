@@ -64,11 +64,24 @@ export type ImportStats = {
   semEmail: number
 }
 
-function baseAmount(r: RawInstallment, basis: AmountBasis): number | null {
+type Amounts = Pick<RawInstallment, 'valorParcelaCents' | 'valorLiquidoCents' | 'valorPagoCents'>
+
+/**
+ * Valor de referência da parcela. Padrão da escola: o VALOR CHEIO da parcela (sem desconto)
+ * é o valor do débito. "liquido" usa o valor com desconto, se a escola mudar a regra.
+ */
+function baseAmount(r: Amounts, basis: AmountBasis): number | null {
   return basis === 'parcela' ? (r.valorParcelaCents ?? r.valorLiquidoCents) : (r.valorLiquidoCents ?? r.valorParcelaCents)
 }
 
-export function isOpenInstallment(r: RawInstallment, rule: OpenRule, basis: AmountBasis = 'liquido'): boolean {
+/** Quanto está em aberto numa parcela já considerada em aberto. */
+export function openAmount(r: Amounts, rules: Pick<RuleSettings, 'open_rule' | 'amount_basis'>): number | null {
+  const base = baseAmount(r, rules.amount_basis)
+  if (base === null) return null
+  return rules.open_rule === 'pago_menor_que_liquido' ? Math.max(0, base - (r.valorPagoCents ?? 0)) : base
+}
+
+export function isOpenInstallment(r: RawInstallment, rule: OpenRule): boolean {
   const pago = r.valorPagoCents
   const paidZero = pago === 0 || (pago === null && !r.dataPagamento)
   switch (rule) {
@@ -77,7 +90,9 @@ export function isOpenInstallment(r: RawInstallment, rule: OpenRule, basis: Amou
     case 'valor_pago_zerado':
       return paidZero
     case 'pago_menor_que_liquido': {
-      const due = baseAmount(r, basis)
+      // Quem pagou pelo menos o valor com desconto quitou a parcela (pagamento em dia).
+      // Abaixo disso é pagamento parcial; o que falta é calculado sobre a base escolhida.
+      const due = r.valorLiquidoCents ?? r.valorParcelaCents
       if (due === null) return !r.dataPagamento
       return (pago ?? 0) < due
     }
@@ -122,10 +137,9 @@ export function buildCharges(records: RawRecord[], rules: RuleSettings, today: s
     const warnings: ChargeWarning[] = []
 
     for (const p of parcelas) {
-      if (!isOpenInstallment(p, rules.open_rule, rules.amount_basis)) continue
-      const base = baseAmount(p, rules.amount_basis)
-      const pago = p.valorPagoCents ?? 0
-      const emAberto = base === null ? 0 : rules.open_rule === 'pago_menor_que_liquido' ? Math.max(0, base - pago) : base
+      if (!isOpenInstallment(p, rules.open_rule)) continue
+      const base = openAmount(p, rules)
+      const emAberto = base ?? 0
       const vencida = daysBetween(p.vencimento, today) > rules.grace_days
       const cobrar = vencida || !rules.only_overdue
       const avisosParcela = [...p.avisos]
@@ -232,6 +246,15 @@ export function buildCharges(records: RawRecord[], rules: RuleSettings, today: s
     semEmail: charges.filter((c) => !c.guardian_email).length,
   }
   return { charges, stats }
+}
+
+/**
+ * Recalcula o valor em aberto de cobranças já gravadas (ex.: quando a base do valor muda
+ * nas configurações). Quais parcelas estão em aberto não muda; só o valor de cada uma.
+ */
+export function recomputeOpenAmounts(installments: Installment[], rules: Pick<RuleSettings, 'open_rule' | 'amount_basis'>) {
+  const next = installments.map((i) => ({ ...i, emAbertoCents: openAmount(i, rules) ?? 0 }))
+  return { installments: next, total_open_cents: next.filter((i) => i.cobrar).reduce((s, i) => s + i.emAbertoCents, 0) }
 }
 
 export function hasCritical(warnings: ChargeWarning[] | null | undefined): boolean {

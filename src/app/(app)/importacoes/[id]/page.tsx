@@ -42,6 +42,7 @@ export default async function ConferencePage({ params }: { params: Promise<{ id:
       testMode={settings.test_mode}
       isAdmin={user.role === 'admin'}
       windowDays={settings.duplicate_window_days}
+      sendMode={settings.send_mode}
     />
   )
 }

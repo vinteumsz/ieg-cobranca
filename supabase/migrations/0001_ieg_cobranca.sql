@@ -101,7 +101,7 @@ create table if not exists public.settings (
     check (open_rule in ('sem_pagamento_ou_zerado', 'sem_data_pagamento', 'valor_pago_zerado', 'pago_menor_que_liquido')),
   only_overdue boolean not null default true,
   grace_days integer not null default 0 check (grace_days between 0 and 60),
-  amount_basis text not null default 'liquido' check (amount_basis in ('liquido', 'parcela')),
+  amount_basis text not null default 'parcela' check (amount_basis in ('liquido', 'parcela')),
   daily_interest_pct numeric(8, 5) check (daily_interest_pct is null or (daily_interest_pct >= 0 and daily_interest_pct <= 1)),
   fine_pct numeric(6, 3) check (fine_pct is null or (fine_pct >= 0 and fine_pct <= 20)),
   interest_start_date date,
@@ -109,6 +109,9 @@ create table if not exists public.settings (
   cpf_display text not null default 'parcial' check (cpf_display in ('nao_exibir', 'parcial', 'completo')),
   store_original_pdf boolean not null default false,
   duplicate_window_days integer not null default 7 check (duplicate_window_days between 1 and 90),
+  -- manual: o sistema abre o WhatsApp/e-mail com a mensagem pronta e o funcionário envia.
+  -- automatico: envio pela API da Meta e por SMTP/Resend (exige credenciais).
+  send_mode text not null default 'manual' check (send_mode in ('manual', 'automatico')),
   test_mode boolean not null default true,
   test_phone text,
   test_email text,

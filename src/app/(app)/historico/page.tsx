@@ -24,7 +24,7 @@ const STATUS_OPTIONS = [
 ]
 
 export default async function HistoryPage({ searchParams }: { searchParams: Promise<SP> }) {
-  await requireUser()
+  const user = await requireUser()
   const sp = await searchParams
   const page = Math.max(1, parseInt(sp.pagina ?? '1', 10) || 1)
   const db = await createUserClient()
@@ -54,7 +54,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
-      <PageHeader title="Histórico" description="Todas as cobranças enviadas, com canal, status de entrega e funcionário responsável. Cancelamentos também ficam registrados." />
+      <PageHeader title="Histórico" description="Todas as cobranças enviadas, com canal, status de entrega e funcionário responsável. Cancelamentos também ficam registrados. Administradores podem apagar registros feitos por engano." />
 
       <form className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_160px_170px_150px_150px_auto]" action="/historico">
         <input name="q" defaultValue={sp.q} placeholder="Responsável ou aluno" className={field} aria-label="Buscar" />
@@ -82,7 +82,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
             Os envios aparecem aqui assim que forem confirmados na conferência.
           </EmptyState>
         ) : (
-          <HistoryTable rows={rows} />
+          <HistoryTable rows={rows} canDelete={user.role === 'admin'} />
         )}
       </Card>
 

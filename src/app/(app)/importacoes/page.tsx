@@ -6,6 +6,7 @@ import { requireUser } from '@/lib/auth'
 import { formatCents, formatDateTime } from '@/lib/format'
 import { createUserClient } from '@/lib/supabase/server'
 import type { ImportRow } from '@/lib/types'
+import { DeleteImportButton } from './delete-import-button'
 
 export const metadata: Metadata = { title: 'Importações' }
 
@@ -36,8 +37,8 @@ export default async function ImportsPage() {
             {rows.map((r) => {
               const when = formatDateTime(r.created_at)
               return (
-                <li key={r.id}>
-                  <Link href={`/importacoes/${r.id}`} className="flex items-center gap-4 px-5 py-4 transition-colors hover:bg-subtle">
+                <li key={r.id} className="flex items-center gap-1 pr-3 transition-colors hover:bg-subtle">
+                  <Link href={`/importacoes/${r.id}`} className="flex min-w-0 flex-1 items-center gap-4 py-4 pl-5">
                     <div className="hidden rounded-lg bg-brand-soft p-2.5 text-brand-strong sm:block">
                       <FileText className="size-5" />
                     </div>
@@ -60,6 +61,7 @@ export default async function ImportsPage() {
                     </div>
                     <ChevronRight className="size-4 text-ink-3" />
                   </Link>
+                  <DeleteImportButton id={r.id} fileName={r.file_name} charges={r.stats?.cobrancas ?? 0} hasPdf={!!r.storage_path} />
                 </li>
               )
             })}

@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildCharges, type RuleSettings } from '@/lib/billing/rules'
+import { buildCharges, recomputeOpenAmounts, type RuleSettings } from '@/lib/billing/rules'
 import { extractDocument } from '@/lib/pdf/extract'
 import { parseReport } from '@/lib/pdf/parse'
 
 const TODAY = '2026-10-05'
-const RULES: RuleSettings = { open_rule: 'sem_pagamento_ou_zerado', only_overdue: true, grace_days: 0, amount_basis: 'liquido' }
+const RULES: RuleSettings = { open_rule: 'sem_pagamento_ou_zerado', only_overdue: true, grace_days: 0, amount_basis: 'parcela' }
 
 async function load(file: string) {
   const data = new Uint8Array(readFileSync(path.join(__dirname, 'fixtures', file)))
@@ -48,24 +48,24 @@ describe.each(['layout-inline.pdf', 'layout-colunas.pdf', 'layout-celulas.pdf'])
     const byStudent = Object.fromEntries(charges.map((c) => [c.student_name, c]))
 
     expect(Object.keys(byStudent).sort()).toEqual(['Ana Beatriz Souza', 'Lucas Oliveira', 'Pedro da Silva', 'Sofia Ramos Pereira'])
-    // Pedro: abril a setembro vencidas (6 × 543,00); outubro a dezembro ainda a vencer
+    // Pedro: abril a setembro vencidas (6 × 603,00, valor cheio); outubro a dezembro ainda a vencer
     expect(byStudent['Pedro da Silva'].open_count).toBe(6)
     expect(byStudent['Pedro da Silva'].upcoming_count).toBe(3)
-    expect(byStudent['Pedro da Silva'].total_open_cents).toBe(325800)
+    expect(byStudent['Pedro da Silva'].total_open_cents).toBe(6 * 60300)
     expect(byStudent['Pedro da Silva'].installments.filter((i) => i.cobrar).map((i) => i.mes)).toEqual([
       'Abril/2026', 'Maio/2026', 'Junho/2026', 'Julho/2026', 'Agosto/2026', 'Setembro/2026',
     ])
     expect(byStudent['Ana Beatriz Souza'].total_open_cents).toBe(60300)
     expect(byStudent['Ana Beatriz Souza'].guardian_phone).toBe('5583988881234')
     expect(byStudent['Ana Beatriz Souza'].warnings.map((w) => w.code)).toContain('sem_email')
-    expect(byStudent['Lucas Oliveira'].total_open_cents).toBe(54300)
+    expect(byStudent['Lucas Oliveira'].total_open_cents).toBe(60300)
     expect(byStudent['Lucas Oliveira'].guardian_phone).toBe('5583987776655')
     expect(byStudent['Sofia Ramos Pereira'].open_count).toBe(9)
-    expect(byStudent['Sofia Ramos Pereira'].total_open_cents).toBe(9 * 54300)
+    expect(byStudent['Sofia Ramos Pereira'].total_open_cents).toBe(9 * 60300)
 
     expect(stats.cobrancas).toBe(4)
     expect(stats.alunosSemPendencia).toBe(1)
-    expect(stats.totalCents).toBe(325800 + 60300 + 54300 + 9 * 54300)
+    expect(stats.totalCents).toBe(6 * 60300 + 60300 + 60300 + 9 * 60300)
     expect(charges.some((c) => c.warnings.some((w) => w.code === 'valores_inconsistentes'))).toBe(false)
   })
 })
@@ -75,8 +75,11 @@ describe('regras configuráveis', () => {
     const res = await load('layout-inline.pdf')
     const { charges } = buildCharges(res.records, { ...RULES, open_rule: 'pago_menor_que_liquido' }, TODAY)
     const lucas = charges.find((c) => c.student_name === 'Lucas Oliveira')!
-    // agosto: 543 − 300 = 243; setembro: 543
-    expect(lucas.total_open_cents).toBe(24300 + 54300)
+    // agosto: 603 − 300 = 303; setembro: 603
+    expect(lucas.total_open_cents).toBe(30300 + 60300)
+    // quem pagou o valor com desconto em dia não fica devendo a diferença
+    expect(charges.find((c) => c.student_name === 'Pedro da Silva')!.open_count).toBe(6)
+    expect(charges.some((c) => c.student_name === 'Carlos Eduardo Oliveira')).toBe(false)
   })
 
   it('sem o filtro de vencidas, parcelas futuras também entram', async () => {
@@ -85,9 +88,18 @@ describe('regras configuráveis', () => {
     expect(charges.find((c) => c.student_name === 'Pedro da Silva')!.open_count).toBe(9)
   })
 
-  it('valor base pode ser o valor da parcela (sem desconto)', async () => {
+  it('valor base pode ser o valor líquido (com desconto)', async () => {
     const res = await load('layout-inline.pdf')
-    const { charges } = buildCharges(res.records, { ...RULES, amount_basis: 'parcela' }, TODAY)
-    expect(charges.find((c) => c.student_name === 'Pedro da Silva')!.total_open_cents).toBe(6 * 60300)
+    const { charges } = buildCharges(res.records, { ...RULES, amount_basis: 'liquido' }, TODAY)
+    expect(charges.find((c) => c.student_name === 'Pedro da Silva')!.total_open_cents).toBe(6 * 54300)
+  })
+
+  it('recalcula cobranças já gravadas quando a base do valor muda', async () => {
+    const res = await load('layout-inline.pdf')
+    const { charges } = buildCharges(res.records, { ...RULES, amount_basis: 'liquido' }, TODAY)
+    const pedro = charges.find((c) => c.student_name === 'Pedro da Silva')!
+    const r = recomputeOpenAmounts(pedro.installments, { open_rule: RULES.open_rule, amount_basis: 'parcela' })
+    expect(r.total_open_cents).toBe(6 * 60300)
+    expect(r.installments.filter((i) => !i.cobrar).every((i) => i.emAbertoCents === 60300)).toBe(true)
   })
 })
