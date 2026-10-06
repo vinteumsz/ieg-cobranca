@@ -1,15 +1,15 @@
 'use client'
 
-import { AlertTriangle, Clock, Download, FileText, Mail, MessageCircle, Search, Send, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, Clock, Download, FileText, Mail, MessageCircle, Search, Send, Trash2, X } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
-import { apiFetch, Badge, Button, Card, cx, EmptyState, Input, Modal, Notice } from '@/components/ui'
+import { apiFetch, Badge, Button, Card, cx, EmptyState, Input, Modal, Notice, Select } from '@/components/ui'
 import { useToast } from '@/components/toast'
 import type { ComposeSettings } from '@/lib/billing/compose'
 import { computeDebtUpdate } from '@/lib/billing/interest'
 import { hasCritical } from '@/lib/billing/rules'
-import { formatCents, formatCpf, formatDateTime, formatPhone, monthShortLabel, nameKey, onlyDigits } from '@/lib/format'
+import { formatCents, formatCpf, formatDateTime, formatPhone, monthShortLabel, nameKey, onlyDigits, reaisToCents } from '@/lib/format'
 import type { ChargeRow, ImportRow } from '@/lib/types'
 import { ChannelBadge, StatusBadge } from './badges'
 import { ChargeDrawer } from './charge-drawer'
@@ -17,6 +17,45 @@ import { ManualQueue } from './manual'
 import { SendDialog, type Channel } from './send-dialog'
 
 type Filter = 'todos' | 'pendentes' | 'selecionados' | 'enviados' | 'erro' | 'alerta' | 'cancelados'
+type SortKey = 'nome' | 'valor_desc' | 'valor_asc' | 'qtd_desc' | 'qtd_asc' | 'atraso' | 'turma'
+type QtyFilter = 'todas' | '1' | '2' | '3' | '6'
+type ContactFilter = 'todos' | 'com_whatsapp' | 'sem_celular' | 'com_email' | 'sem_email' | 'sem_contato'
+
+const SORTS: [SortKey, string][] = [
+  ['nome', 'Nome (A–Z)'],
+  ['valor_desc', 'Maior valor'],
+  ['valor_asc', 'Menor valor'],
+  ['qtd_desc', 'Mais parcelas'],
+  ['qtd_asc', 'Menos parcelas'],
+  ['atraso', 'Atraso mais antigo'],
+  ['turma', 'Turma'],
+]
+const QTYS: [QtyFilter, string][] = [
+  ['todas', 'Todas'],
+  ['1', 'Só 1 parcela'],
+  ['2', '2 ou mais'],
+  ['3', '3 ou mais'],
+  ['6', '6 ou mais'],
+]
+const CONTACTS: [ContactFilter, string][] = [
+  ['todos', 'Todos'],
+  ['com_whatsapp', 'Com celular'],
+  ['sem_celular', 'Sem celular'],
+  ['com_email', 'Com e-mail'],
+  ['sem_email', 'Sem e-mail'],
+  ['sem_contato', 'Sem celular e sem e-mail'],
+]
+const byName = (a: ChargeRow, b: ChargeRow) =>
+  a.guardian_name.localeCompare(b.guardian_name, 'pt-BR') || a.student_name.localeCompare(b.student_name, 'pt-BR')
+const COMPARE: Record<SortKey, (a: ChargeRow, b: ChargeRow) => number> = {
+  nome: byName,
+  valor_desc: (a, b) => b.total_open_cents - a.total_open_cents || byName(a, b),
+  valor_asc: (a, b) => a.total_open_cents - b.total_open_cents || byName(a, b),
+  qtd_desc: (a, b) => b.open_count - a.open_count || b.total_open_cents - a.total_open_cents || byName(a, b),
+  qtd_asc: (a, b) => a.open_count - b.open_count || a.total_open_cents - b.total_open_cents || byName(a, b),
+  atraso: (a, b) => (a.oldest_due ?? '9999').localeCompare(b.oldest_due ?? '9999') || b.total_open_cents - a.total_open_cents || byName(a, b),
+  turma: (a, b) => (a.class_name ?? '~').localeCompare(b.class_name ?? '~', 'pt-BR', { numeric: true }) || byName(a, b),
+}
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'todos', label: 'Todos' },
@@ -71,6 +110,26 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
     setRecent((r) => ({ ...r, [u.group_key]: sentAt }))
   }
   const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<SortKey>('nome')
+  const [qty, setQty] = useState<QtyFilter>('todas')
+  const [minValue, setMinValue] = useState('')
+  const [maxValue, setMaxValue] = useState('')
+  const [turma, setTurma] = useState('')
+  const [contact, setContact] = useState<ContactFilter>('todos')
+  const turmas = useMemo(
+    () => [...new Set(charges.map((c) => c.class_name).filter((t): t is string => !!t))].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true })),
+    [charges],
+  )
+  const minCents = reaisToCents(minValue)
+  const maxCents = reaisToCents(maxValue)
+  const extraActive = qty !== 'todas' || minCents !== null || maxCents !== null || !!turma || contact !== 'todos'
+  const clearExtra = () => {
+    setQty('todas')
+    setMinValue('')
+    setMaxValue('')
+    setTurma('')
+    setContact('todos')
+  }
   const [filter, setFilter] = useState<Filter>('todos')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [openId, setOpenId] = useState<string | null>(null)
@@ -106,7 +165,25 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
   )
 
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.key, charges.filter((c) => byFilter[f.key](c)).length])) as Record<Filter, number>, [charges, byFilter])
-  const visible = useMemo(() => charges.filter((c) => byFilter[filter](c) && matches(c)), [charges, filter, matches, byFilter])
+  const visible = useMemo(() => {
+    const passes = (c: ChargeRow) => {
+      if (qty !== 'todas' && (qty === '1' ? c.open_count !== 1 : c.open_count < Number(qty))) return false
+      if (minCents !== null && c.total_open_cents < minCents) return false
+      if (maxCents !== null && c.total_open_cents > maxCents) return false
+      if (turma && c.class_name !== turma) return false
+      switch (contact) {
+        case 'com_whatsapp': return !!c.guardian_phone
+        case 'sem_celular': return !c.guardian_phone
+        case 'com_email': return !!c.guardian_email
+        case 'sem_email': return !c.guardian_email
+        case 'sem_contato': return !c.guardian_phone && !c.guardian_email
+        default: return true
+      }
+    }
+    return charges.filter((c) => byFilter[filter](c) && matches(c) && passes(c)).sort(COMPARE[sort])
+  }, [charges, filter, matches, byFilter, qty, minCents, maxCents, turma, contact, sort])
+  const visibleTotal = visible.filter((c) => c.status !== 'cancelado').reduce((sum, c) => sum + c.total_open_cents, 0)
+  const toggleSort = (desc: SortKey, asc: SortKey) => setSort((s) => (s === desc ? asc : desc))
   const selectable = visible
   const allVisibleSelected = selectable.length > 0 && selectable.every((c) => selected.has(c.id))
   const selectedCharges = charges.filter((c) => selected.has(c.id))
@@ -229,19 +306,62 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
       )}
       <p className="mb-4 text-sm text-ink-3">
         {interestConfigured
-          ? `Valor cheio das parcelas vencidas. Multa de ${pctLabel(compose.fine_pct)} e juros de ${formatCents(compose.daily_interest_cents ?? 0)} por dia, contados a partir do primeiro dia útil depois do vencimento; o valor atualizado até hoje aparece abaixo de cada total, no detalhe e nas mensagens.`
+          ? `Valor cheio das parcelas vencidas. Multa de ${pctLabel(compose.fine_pct)} e juros de ${pctLabel(compose.daily_interest_pct)} ao dia, contados a partir do primeiro dia útil depois do vencimento; o valor atualizado até hoje aparece abaixo de cada total, no detalhe e nas mensagens.`
           : 'Valores pelo valor cheio das parcelas, sem juros. As mensagens avisam que “os valores estão sujeitos à atualização”.'}
       </p>
 
       <Card>
         <div className="flex flex-col gap-3 border-b border-line p-4">
-          <div className="relative w-full md:max-w-md">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" />
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar responsável, aluno, CPF ou turma" className="pl-9" aria-label="Buscar" />
-            {query && (
-              <button onClick={() => setQuery('')} className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-ink-3 hover:text-ink" aria-label="Limpar busca">
-                <X className="size-4" />
-              </button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="relative w-full md:max-w-md">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar responsável, aluno, CPF ou turma" className="pl-9" aria-label="Buscar" />
+              {query && (
+                <button onClick={() => setQuery('')} className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-ink-3 hover:text-ink" aria-label="Limpar busca">
+                  <X className="size-4" />
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-ink-2" aria-live="polite">
+              {visible.length === charges.length ? `${charges.length} cobranças` : `Mostrando ${visible.length} de ${charges.length}`} ·{' '}
+              <strong className="text-ink tabular">{formatCents(visibleTotal)}</strong>
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:flex-wrap lg:items-end">
+            <FilterBox label="Ordenar por" className="lg:w-44">
+              <Select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} className="h-9" aria-label="Ordenar por">
+                {SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </Select>
+            </FilterBox>
+            <FilterBox label="Parcelas em aberto" className="lg:w-44">
+              <Select value={qty} onChange={(e) => setQty(e.target.value as QtyFilter)} className="h-9" aria-label="Quantidade de parcelas">
+                {QTYS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </Select>
+            </FilterBox>
+            <FilterBox label="Valor de (R$)" className="lg:w-28">
+              <Input value={minValue} onChange={(e) => setMinValue(e.target.value)} inputMode="decimal" placeholder="0,00" className="h-9 tabular" aria-label="Valor mínimo" />
+            </FilterBox>
+            <FilterBox label="até (R$)" className="lg:w-28">
+              <Input value={maxValue} onChange={(e) => setMaxValue(e.target.value)} inputMode="decimal" placeholder="sem limite" className="h-9 tabular" aria-label="Valor máximo" />
+            </FilterBox>
+            {turmas.length > 1 && (
+              <FilterBox label="Turma" className="lg:w-40">
+                <Select value={turma} onChange={(e) => setTurma(e.target.value)} className="h-9" aria-label="Turma">
+                  <option value="">Todas</option>
+                  {turmas.map((t) => <option key={t} value={t}>{t}</option>)}
+                </Select>
+              </FilterBox>
+            )}
+            <FilterBox label="Contato" className="lg:w-48">
+              <Select value={contact} onChange={(e) => setContact(e.target.value as ContactFilter)} className="h-9" aria-label="Contato">
+                {CONTACTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </Select>
+            </FilterBox>
+            {extraActive && (
+              <Button variant="ghost" size="sm" className="h-9 self-end" icon={<X className="size-3.5" />} onClick={clearExtra}>
+                Limpar filtros
+              </Button>
             )}
           </div>
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 md:flex-wrap md:overflow-visible md:pb-0" role="tablist" aria-label="Filtros">
@@ -265,7 +385,7 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
 
         {visible.length === 0 ? (
           <EmptyState title={charges.length === 0 ? 'Nenhuma cobrança nesta importação' : 'Nada encontrado'}>
-            {charges.length === 0 ? 'Todos os alunos do relatório estão em dia com as parcelas vencidas.' : 'Ajuste a busca ou o filtro.'}
+            {charges.length === 0 ? 'Todos os alunos do relatório estão em dia com as parcelas vencidas.' : 'Ajuste a busca ou os filtros.'}
           </EmptyState>
         ) : (
           <>
@@ -288,11 +408,21 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
                     <th className="py-2.5 pl-4">
                       <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} className="size-4" aria-label="Selecionar todos os visíveis" />
                     </th>
-                    <th className="px-3 py-2.5 font-medium">Responsável · CPF</th>
-                    <th className="px-3 py-2.5 font-medium">Aluno · Turma</th>
-                    <th className="px-3 py-2.5 font-medium">Mensalidades em aberto</th>
-                    <th className="px-2 py-2.5 text-right font-medium" title="Quantidade de parcelas">Qtd.</th>
-                    <th className="px-3 py-2.5 text-right font-medium">Valor total</th>
+                    <th className="px-3 py-2.5 font-medium">
+                      <SortButton active={sort === 'nome'} dir="asc" onClick={() => setSort('nome')}>Responsável · CPF</SortButton>
+                    </th>
+                    <th className="px-3 py-2.5 font-medium">
+                      <SortButton active={sort === 'turma'} dir="asc" onClick={() => setSort('turma')}>Aluno · Turma</SortButton>
+                    </th>
+                    <th className="px-3 py-2.5 font-medium">
+                      <SortButton active={sort === 'atraso'} dir="asc" onClick={() => setSort('atraso')}>Mensalidades em aberto</SortButton>
+                    </th>
+                    <th className="px-2 py-2.5 text-right font-medium">
+                      <SortButton align="right" title="Quantidade de parcelas" active={sort === 'qtd_desc' || sort === 'qtd_asc'} dir={sort === 'qtd_asc' ? 'asc' : 'desc'} onClick={() => toggleSort('qtd_desc', 'qtd_asc')}>Qtd.</SortButton>
+                    </th>
+                    <th className="px-3 py-2.5 text-right font-medium">
+                      <SortButton align="right" active={sort === 'valor_desc' || sort === 'valor_asc'} dir={sort === 'valor_asc' ? 'asc' : 'desc'} onClick={() => toggleSort('valor_desc', 'valor_asc')}>Valor total</SortButton>
+                    </th>
                     <th className="px-3 py-2.5 font-medium">Telefone · WhatsApp</th>
                     <th className="px-3 py-2.5 font-medium">E-mail · envio</th>
                     <th className="px-3 py-2.5 pr-4 font-medium">Status</th>
@@ -541,5 +671,29 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
         </p>
       </Modal>
     </div>
+  )
+}
+
+function FilterBox({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) {
+  return (
+    <label className={cx('flex min-w-0 flex-col gap-1', className)}>
+      <span className="text-xs text-ink-3">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function SortButton({ active, dir, onClick, align, title, children }: { active: boolean; dir: 'asc' | 'desc'; onClick: () => void; align?: 'right'; title?: string; children: React.ReactNode }) {
+  const Icon = dir === 'asc' ? ArrowUp : ArrowDown
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title ?? 'Ordenar'}
+      className={cx('inline-flex items-center gap-1 rounded font-medium hover:text-ink', align === 'right' && 'flex-row-reverse', active && 'text-ink')}
+    >
+      {children}
+      <Icon className={cx('size-3 shrink-0', active ? 'opacity-100' : 'opacity-0')} aria-hidden />
+    </button>
   )
 }

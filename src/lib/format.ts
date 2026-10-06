@@ -63,6 +63,15 @@ export function firstName(s: string): string {
 
 export const MONEY_RE = /(?<![\d,./])-?\d{1,3}(?:\.\d{3})*,\d{2}(?![\d/])|(?<![\d,./])-?\d+,\d{2}(?![\d/])/g
 
+/** Valor digitado pelo funcionário ("1.250,00", "R$ 0,19", "300") → centavos. */
+export function reaisToCents(v: string): number | null {
+  let t = v.replace(/R\$|\s/g, '')
+  if (!t) return null
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.')
+  const n = Number(t)
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null
+}
+
 export function parseMoneyToCents(raw: string): number | null {
   const m = raw.replace(/R\$\s*/gi, '').trim().match(/^(-)?(\d{1,3}(?:\.\d{3})*|\d+),(\d{2})$/)
   if (!m) return null

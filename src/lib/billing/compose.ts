@@ -11,7 +11,7 @@ export type ComposeSettings = {
   cpf_display: CpfDisplay
   show_updated_values: boolean
   email_team_name: string
-  daily_interest_cents: number | null
+  daily_interest_pct: number | null
   fine_pct: number | null
   interest_start_date: string | null
   wa_mode: WaMode
@@ -30,7 +30,7 @@ export function toComposeSettings(s: EffectiveSettings, today: string): ComposeS
     cpf_display: s.cpf_display,
     show_updated_values: s.show_updated_values,
     email_team_name: s.email_team_name,
-    daily_interest_cents: s.daily_interest_cents,
+    daily_interest_pct: s.daily_interest_pct,
     fine_pct: s.fine_pct,
     interest_start_date: s.interest_start_date,
     // No envio manual o funcionário envia pelo próprio WhatsApp: vale o texto livre, sem modelo da Meta

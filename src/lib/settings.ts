@@ -14,8 +14,7 @@ export type Settings = {
   only_overdue: boolean
   grace_days: number
   amount_basis: AmountBasis
-  /** Juros por dia de atraso, em centavos (valor fixo, igual para toda parcela) */
-  daily_interest_cents: number | null
+  daily_interest_pct: number | null
   fine_pct: number | null
   interest_start_date: string | null
   show_updated_values: boolean
@@ -39,8 +38,6 @@ export type Settings = {
   email_reply_to: string | null
   email_provider: EmailProvider
   updated_at?: string | null
-  /** Só para a tela: o banco já tem a coluna daily_interest_cents (migração 0002) */
-  daily_interest_editable?: boolean
 }
 
 export const OPEN_RULE_LABELS: Record<OpenRule, string> = {
@@ -131,8 +128,8 @@ export const DEFAULT_SETTINGS: Settings = {
   only_overdue: true,
   grace_days: 0,
   amount_basis: 'parcela',
-  // Regras da escola: multa de 2% e juros fixos de R$ 0,19 por dia de atraso
-  daily_interest_cents: 19,
+  // Regras do boleto/sistema da escola: multa de 2% e juros de 0,033% ao dia (1% ao mês)
+  daily_interest_pct: 0.033,
   fine_pct: 2,
   interest_start_date: null,
   show_updated_values: true,
@@ -182,10 +179,8 @@ const rate = (v: unknown, def: number | null) => (v === null || v === undefined 
 
 export function normalizeSettings(row: Partial<Settings> | null | undefined): Settings {
   const s = { ...DEFAULT_SETTINGS, ...(row ?? {}) } as Settings
-  s.daily_interest_cents = INTEREST_ENABLED ? rate(row?.daily_interest_cents, DEFAULT_SETTINGS.daily_interest_cents) : null
+  s.daily_interest_pct = INTEREST_ENABLED ? rate(row?.daily_interest_pct, DEFAULT_SETTINGS.daily_interest_pct) : null
   s.fine_pct = INTEREST_ENABLED ? rate(row?.fine_pct, DEFAULT_SETTINGS.fine_pct) : null
-  s.daily_interest_editable = !row || 'daily_interest_cents' in row
-  delete (s as Record<string, unknown>).daily_interest_pct // coluna antiga (percentual), não usada
   if (!INTEREST_ENABLED) s.interest_start_date = null
   return s
 }

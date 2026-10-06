@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeDebtUpdate, fineFor, lateDays, lateFrom } from '@/lib/billing/interest'
+import { computeDebtUpdate, dailyInterestFor, fineFor, lateDays, lateFrom } from '@/lib/billing/interest'
 import { buildVariables, renderMetaTemplate, renderTemplate, sanitizeTemplateParam, templateParamValues } from '@/lib/billing/messages'
 import type { Installment } from '@/lib/billing/rules'
 import {
@@ -23,7 +23,7 @@ const CHARGE = {
   total_open_cents: 162900,
 }
 const CTX = {
-  daily_interest_cents: null, fine_pct: null, interest_start_date: null, cpf_display: 'parcial' as const,
+  daily_interest_pct: null, fine_pct: null, interest_start_date: null, cpf_display: 'parcial' as const,
   show_updated_values: true, email_team_name: 'Equipe de Cobrança', today: '2026-10-05',
 }
 
@@ -68,13 +68,13 @@ describe('juros', () => {
     expect(u.updatedCents).toBe(162900)
   })
   it('calcula multa e juros diários simples', () => {
-    const u = computeDebtUpdate([inst('2026-09-15', 100000)], { daily_interest_cents: 33, fine_pct: 2, interest_start_date: null }, '2026-10-05')
+    const u = computeDebtUpdate([inst('2026-09-15', 100000)], { daily_interest_pct: 0.033, fine_pct: 2, interest_start_date: null }, '2026-10-05')
     expect(u.fineCents).toBe(2000) // 2%
     expect(u.interestCents).toBe(Math.round(100000 * 0.033 * 20 / 100)) // 20 dias
     expect(u.updatedCents).toBe(100000 + 2000 + 660)
   })
   it('reproduz o relatório do sistema da escola (R$ 563,00, vencimentos no dia 20)', () => {
-    const regras = { daily_interest_cents: 19, fine_pct: 2, interest_start_date: null }
+    const regras = { daily_interest_pct: 0.033, fine_pct: 2, interest_start_date: null }
     const parcelas = [2, 3, 4, 5, 6, 7, 8, 9].map((m) => inst(`2026-${String(m).padStart(2, '0')}-20`, 56300))
     const u = computeDebtUpdate(parcelas, regras, '2026-10-05')
     // MULTA(R$) e JUROS(R$) do relatório, fevereiro a setembro
@@ -92,21 +92,22 @@ describe('juros', () => {
     expect(lateDays('2026-02-20', '2026-02-23')).toBe(1)
   })
   it('bate com o boleto: R$ 590,00 vencida em 02/11/2026', () => {
-    const regras = { daily_interest_cents: 19, fine_pct: 2, interest_start_date: null }
+    const regras = { daily_interest_pct: 0.033, fine_pct: 2, interest_start_date: null }
     const p = [inst('2026-11-02', 59000)]
     expect(computeDebtUpdate(p, regras, '2026-11-02')).toMatchObject({ fineCents: 0, interestCents: 0, updatedCents: 59000 })
     // "A partir de 03/11/2026 cobrar multa de R$ 11,80" e "juros de R$ 0,19 por dia"
     expect(computeDebtUpdate(p, regras, '2026-11-03')).toMatchObject({ fineCents: 1180, interestCents: 19, updatedCents: 59000 + 1180 + 19 })
+    expect(dailyInterestFor(59000, 0.033)).toBe(19)
+    expect(dailyInterestFor(56300, 0.033)).toBe(19)
     expect(fineFor(56300, 2)).toBe(1126)
   })
-  it('juros com valor fixo: R$ 0,19 por dia para qualquer valor de parcela', () => {
-    const regras = { daily_interest_cents: 19, fine_pct: 2, interest_start_date: null }
-    const u = computeDebtUpdate([inst('2026-09-30', 62600), inst('2026-09-30', 125000)], regras, '2026-10-06')
-    // 30/09 é quarta → atraso desde 01/10: 6 dias
-    expect(u.items.map((i) => [i.days, i.interestCents, i.fineCents])).toEqual([[6, 114, 1252], [6, 114, 2500]])
+  it('juros de 0,033% ao dia acompanham o valor da parcela (cadastro "Atualiza por DIA")', () => {
+    expect(dailyInterestFor(62600, 0.033)).toBe(21) // R$ 626,00 → R$ 0,2066 → R$ 0,21
+    expect(dailyInterestFor(125000, 0.033)).toBe(41) // R$ 1.250,00 → R$ 0,4125 → R$ 0,41
+    expect(fineFor(62600, 2)).toBe(1252)
   })
   it('respeita a data inicial de cobrança dos juros', () => {
-    const u = computeDebtUpdate([inst('2026-04-15', 100000)], { daily_interest_cents: 100, fine_pct: null, interest_start_date: '2026-10-01' }, '2026-10-05')
+    const u = computeDebtUpdate([inst('2026-04-15', 100000)], { daily_interest_pct: 0.1, fine_pct: null, interest_start_date: '2026-10-01' }, '2026-10-05')
     expect(u.interestCents).toBe(100 * 5) // 01/10 a 05/10
   })
 })
@@ -129,10 +130,10 @@ describe('mensagens', () => {
     expect(msg).toContain('Pedro da Silva')
   })
   it('mostra o valor atualizado quando há taxa configurada', () => {
-    const msg = renderTemplate(DEFAULT_WA_TEXT, buildVariables(CHARGE, { ...CTX, daily_interest_cents: 19, fine_pct: 2 }))
+    const msg = renderTemplate(DEFAULT_WA_TEXT, buildVariables(CHARGE, { ...CTX, daily_interest_pct: 0.033, fine_pct: 2 }))
     expect(msg).toContain('Valor total identificado: R$ 1.629,00')
     expect(msg).toContain('Multa (2%): R$ 32,58')
-    expect(msg).toContain('Juros (R$ 0,19 por dia):')
+    expect(msg).toContain('Juros (0,033% ao dia):')
     expect(msg).toContain('Valor atualizado em 05/10/2026:')
     expect(msg).not.toContain('Valor original')
   })
