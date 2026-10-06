@@ -229,7 +229,7 @@ export function ConferenceView({ importRow, initialCharges, recent: initialRecen
       )}
       <p className="mb-4 text-sm text-ink-3">
         {interestConfigured
-          ? `Valor cheio das parcelas vencidas. Multa de ${pctLabel(compose.fine_pct)} e juros de ${pctLabel(compose.daily_interest_pct)} ao dia, contados a partir do primeiro dia útil depois do vencimento; o valor atualizado até hoje aparece abaixo de cada total, no detalhe e nas mensagens.`
+          ? `Valor cheio das parcelas vencidas. Multa de ${pctLabel(compose.fine_pct)} e juros de ${formatCents(compose.daily_interest_cents ?? 0)} por dia, contados a partir do primeiro dia útil depois do vencimento; o valor atualizado até hoje aparece abaixo de cada total, no detalhe e nas mensagens.`
           : 'Valores pelo valor cheio das parcelas, sem juros. As mensagens avisam que “os valores estão sujeitos à atualização”.'}
       </p>
 

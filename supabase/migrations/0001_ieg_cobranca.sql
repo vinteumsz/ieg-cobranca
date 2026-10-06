@@ -103,6 +103,8 @@ create table if not exists public.settings (
   grace_days integer not null default 0 check (grace_days between 0 and 60),
   amount_basis text not null default 'parcela' check (amount_basis in ('liquido', 'parcela')),
   daily_interest_pct numeric(8, 5) check (daily_interest_pct is null or (daily_interest_pct >= 0 and daily_interest_pct <= 1)),
+  -- juros com valor fixo por dia de atraso, em centavos (nulo = padrão da escola, R$ 0,19)
+  daily_interest_cents integer check (daily_interest_cents is null or (daily_interest_cents between 0 and 100000)),
   fine_pct numeric(6, 3) check (fine_pct is null or (fine_pct >= 0 and fine_pct <= 20)),
   interest_start_date date,
   show_updated_values boolean not null default true,

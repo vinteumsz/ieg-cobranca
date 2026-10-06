@@ -6,9 +6,9 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useToast } from '@/components/toast'
 import { apiFetch, Badge, Button, Card, CardHeader, cx, Field, Input, Notice, Select, Textarea } from '@/components/ui'
 import { composeMessages, type ComposeSettings } from '@/lib/billing/compose'
-import { dailyInterestFor, fineFor } from '@/lib/billing/interest'
+import { fineFor } from '@/lib/billing/interest'
 import type { Installment } from '@/lib/billing/rules'
-import { formatCents, monthLabel, parseMoneyToCents } from '@/lib/format'
+import { formatCents, monthLabel } from '@/lib/format'
 import { INTEREST_ENABLED, OPEN_RULE_LABELS, type OpenRule, type Settings } from '@/lib/settings'
 
 type SecretStatus = { configured: boolean; source: 'tela' | 'ambiente' | null; hint: string }
@@ -27,6 +27,15 @@ type Props = {
 
 const pct = (n: number | null) => (n === null || n === undefined ? '' : String(n).replace('.', ','))
 const pctNum = (v: string) => (v.trim() ? Number(v.replace(',', '.')) || null : null)
+/** "0,19" / "R$ 1.234,50" / "0.19" → centavos */
+const reaisToCents = (v: string): number | null => {
+  let t = v.replace(/R\$|\s/g, '')
+  if (!t) return null
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.')
+  const n = Number(t)
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null
+}
+const centsLabel = (c: number | null) => (c === null || c === undefined ? '' : (c / 100).toFixed(2).replace('.', ','))
 
 const SECTIONS = [
   ['envio', 'Forma de envio'],
@@ -48,7 +57,7 @@ export function SettingsView(props: Props) {
   const manual = initial.send_mode === 'manual'
 
   // Percentuais como texto (aceitam vírgula)
-  const [daily, setDaily] = useState(pct(initial.daily_interest_pct))
+  const [daily, setDaily] = useState(centsLabel(initial.daily_interest_cents))
   const [fine, setFine] = useState(pct(initial.fine_pct))
 
   // Modelos com padrão aplicado para edição
@@ -86,7 +95,7 @@ export function SettingsView(props: Props) {
       cpf_display: s.cpf_display,
       show_updated_values: s.show_updated_values,
       email_team_name: s.email_team_name,
-      daily_interest_pct: INTEREST_ENABLED ? pctNum(daily) : null,
+      daily_interest_cents: INTEREST_ENABLED ? reaisToCents(daily) : null,
       fine_pct: INTEREST_ENABLED ? pctNum(fine) : null,
       interest_start_date: INTEREST_ENABLED ? s.interest_start_date : null,
       wa_mode: s.send_mode === 'manual' ? 'texto' : s.wa_mode,
@@ -147,22 +156,33 @@ export function SettingsView(props: Props) {
             id="juros"
             icon={<Percent className="size-4" />}
             title="Juros e multa"
-            description="Como no sistema da escola: sobre o valor cheio de cada parcela vencida, contando os dias a partir do primeiro dia útil depois do vencimento (vencimento na sexta, no sábado ou no domingo começa a contar na segunda). Use 0 para não cobrar."
+            description="Como no sistema da escola: multa sobre o valor cheio de cada parcela vencida e juros com valor fixo por dia, contando os dias a partir do primeiro dia útil depois do vencimento (vencimento na sexta, no sábado ou no domingo começa a contar na segunda). Use 0 para não cobrar."
           >
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Multa por atraso (%)" htmlFor="fine" hint="Cobrada uma vez. Padrão da escola: 2">
                 <Input id="fine" inputMode="decimal" value={fine} onChange={(e) => setFine(e.target.value)} placeholder="0" />
               </Field>
-              <Field label="Juros por dia (%)" htmlFor="daily" hint="Padrão da escola: 0,033 (1% ao mês)">
-                <Input id="daily" inputMode="decimal" value={daily} onChange={(e) => setDaily(e.target.value)} placeholder="0" />
+              <Field
+                label="Juros por dia (R$)"
+                htmlFor="daily"
+                hint={initial.daily_interest_editable ? 'Valor fixo, igual para toda parcela. Padrão da escola: 0,19' : 'Valor fixo da escola. Para alterar aqui, rode no Supabase o arquivo supabase/migrations/0002_juros_fixo.sql.'}
+              >
+                <Input id="daily" inputMode="decimal" value={daily} onChange={(e) => setDaily(e.target.value)} placeholder="0,00" disabled={!initial.daily_interest_editable} />
               </Field>
               <Field label="Começar a contar em (opcional)" htmlFor="istart" hint="Antes desta data, não há juros nem multa.">
                 <Input id="istart" type="date" value={s.interest_start_date ?? ''} onChange={(e) => set('interest_start_date', e.target.value || null)} />
               </Field>
             </div>
-            <InterestExample fine={pctNum(fine)} daily={pctNum(daily)} />
+            <InterestExample fine={pctNum(fine)} dailyCents={reaisToCents(daily)} />
             <Check checked={s.show_updated_values} onChange={(v) => set('show_updated_values', v)} label="Mostrar multa, juros e valor atualizado nas mensagens" />
-            <SaveRow loading={saving === 'juros'} onClick={() => save('juros', { daily_interest_pct: daily.trim() || '0', fine_pct: fine.trim() || '0', interest_start_date: s.interest_start_date, show_updated_values: s.show_updated_values })} />
+            <SaveRow loading={saving === 'juros'} onClick={() =>
+                save('juros', {
+                  ...(initial.daily_interest_editable ? { daily_interest_cents: reaisToCents(daily) ?? 0 } : {}),
+                  fine_pct: fine.trim() || '0',
+                  interest_start_date: s.interest_start_date,
+                  show_updated_values: s.show_updated_values,
+                })
+              } />
           </Section>
         )}
 
@@ -409,12 +429,12 @@ function Section({ id, icon, title, description, children }: { id: string; icon:
 }
 
 /** Conferência rápida com um boleto: mesmo cálculo usado nas mensagens. */
-function InterestExample({ fine, daily }: { fine: number | null; daily: number | null }) {
+function InterestExample({ fine, dailyCents }: { fine: number | null; dailyCents: number | null }) {
   const [value, setValue] = useState('563,00')
-  const base = parseMoneyToCents(value) ?? 0
-  if (!fine && !daily) return <p className="text-sm text-ink-3">Multa e juros zerados: nada é calculado e as mensagens só avisam que os valores estão sujeitos à atualização.</p>
+  const base = reaisToCents(value) ?? 0
+  if (!fine && !dailyCents) return <p className="text-sm text-ink-3">Multa e juros zerados: nada é calculado e as mensagens só avisam que os valores estão sujeitos à atualização.</p>
   const f = fineFor(base, fine)
-  const d = dailyInterestFor(base, daily)
+  const d = dailyCents ?? 0
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-subtle px-4 py-3 text-sm text-ink-2">
       <span>Confira com um boleto: parcela de</span>

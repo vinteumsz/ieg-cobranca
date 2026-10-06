@@ -1,8 +1,7 @@
 // Atualização da dívida (multa + juros diários simples), reproduzindo o sistema da escola:
 //  • base: o valor em aberto de cada parcela (valor cheio)
 //  • multa única de X% (ex.: 2% de R$ 563,00 = R$ 11,26)
-//  • juros de Y% por dia, com o valor diário arredondado para o centavo antes de multiplicar
-//    pelos dias (ex.: 0,033% de R$ 563,00 = R$ 0,19 por dia)
+//  • juros com valor fixo por dia de atraso, igual para qualquer parcela (R$ 0,19)
 //  • os dias de atraso contam a partir do primeiro dia útil (segunda a sexta) depois do
 //    vencimento, incluindo esse dia: vencimento na quinta → conta desde sexta; vencimento
 //    na sexta, no sábado ou no domingo → conta desde segunda
@@ -14,7 +13,8 @@ import { addDays, daysBetween } from '../format'
 import type { Installment } from './rules'
 
 export type InterestSettings = {
-  daily_interest_pct: number | null
+  /** Juros por dia de atraso, em centavos */
+  daily_interest_cents: number | null
   fine_pct: number | null
   interest_start_date: string | null
 }
@@ -49,11 +49,6 @@ export function fineFor(baseCents: number, finePct: number | null): number {
   return finePct ? roundCents((baseCents * finePct) / 100) : 0
 }
 
-/** Juros de um dia de atraso, em centavos. */
-export function dailyInterestFor(baseCents: number, dailyPct: number | null): number {
-  return dailyPct ? roundCents((baseCents * dailyPct) / 100) : 0
-}
-
 /** Primeiro dia útil (segunda a sexta) depois do vencimento: a partir dele há multa e juros. */
 export function lateFrom(vencimento: string): string {
   let d = addDays(vencimento, 1)
@@ -72,7 +67,7 @@ export function lateDays(vencimento: string, today: string, startDate: string | 
 }
 
 export function isInterestConfigured(s: InterestSettings): boolean {
-  return (s.daily_interest_pct !== null && s.daily_interest_pct > 0) || (s.fine_pct !== null && s.fine_pct > 0)
+  return (s.daily_interest_cents !== null && s.daily_interest_cents > 0) || (s.fine_pct !== null && s.fine_pct > 0)
 }
 
 export function computeDebtUpdate(installments: Installment[], s: InterestSettings, today: string): DebtUpdate {
@@ -82,7 +77,7 @@ export function computeDebtUpdate(installments: Installment[], s: InterestSettin
   const items: DebtItem[] = charged.map((i) => {
     const days = configured ? lateDays(i.vencimento, today, s.interest_start_date) : 0
     const fineCents = days > 0 ? fineFor(i.emAbertoCents, s.fine_pct) : 0
-    const interestCents = days > 0 ? dailyInterestFor(i.emAbertoCents, s.daily_interest_pct) * days : 0
+    const interestCents = days > 0 ? Math.round(s.daily_interest_cents ?? 0) * days : 0
     return { vencimento: i.vencimento, mes: i.mes, originalCents: i.emAbertoCents, days, fineCents, interestCents, totalCents: i.emAbertoCents + fineCents + interestCents }
   })
   const fineCents = items.reduce((sum, i) => sum + i.fineCents, 0)

@@ -87,7 +87,7 @@ export function buildVariables(charge: MessageCharge, ctx: MessageContext): Reco
     const pct = (n: number) => `${String(n).replace('.', ',')}%`
     const rows: string[] = []
     if (update.fineCents > 0) rows.push(`Multa (${pct(ctx.fine_pct!)}): ${formatCents(update.fineCents)}`)
-    if (ctx.daily_interest_pct) rows.push(`Juros (${pct(ctx.daily_interest_pct)} ao dia): ${formatCents(update.interestCents)}`)
+    if (ctx.daily_interest_cents) rows.push(`Juros (${formatCents(ctx.daily_interest_cents)} por dia): ${formatCents(update.interestCents)}`)
     rows.push(`Valor atualizado em ${formatDateBR(update.date)}: ${formatCents(update.updatedCents)}`)
     detalhe = '\n' + rows.join('\n')
   }

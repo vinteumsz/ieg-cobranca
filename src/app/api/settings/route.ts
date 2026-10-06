@@ -44,7 +44,7 @@ const VALIDATORS: { [K in keyof Settings]?: (v: unknown) => unknown } = {
   only_overdue: bool,
   grace_days: (v) => int(v, 0, 60, 'Tolerância'),
   amount_basis: (v) => oneOf(v, ['liquido', 'parcela'] as const, 'Valor considerado'),
-  daily_interest_pct: (v) => numOrNull(v, 0, 1, 'Juros diário (%)'),
+  daily_interest_cents: (v) => int(v, 0, 100000, 'Juros por dia'),
   fine_pct: (v) => numOrNull(v, 0, 20, 'Multa (%)'),
   interest_start_date: (v) => {
     if (v === null || v === '') return null
@@ -118,6 +118,9 @@ export const PUT = route(async (req: NextRequest) => {
   const db = createAdminClient()
   const before = normalizeSettings((await db.from('settings').select('*').eq('id', 1).maybeSingle()).data as Partial<Settings> | null)
   const { error } = await db.from('settings').update(update).eq('id', 1)
+  if (error && /daily_interest_cents/.test(error.message)) {
+    throw new ApiError(422, 'Para alterar o valor dos juros, rode antes no Supabase (SQL Editor) o arquivo supabase/migrations/0002_juros_fixo.sql.')
+  }
   if (error) throw new Error(error.message)
   await audit(user, 'configuracoes_alteradas', { entity: 'settings', details: { campos: Object.keys(update).filter((k) => !k.startsWith('updated_')) } })
 
